@@ -12,6 +12,7 @@
 const customerId = $input.first().json.customer_id;
 const customerEmail = $input.first().json.customer_email;
 const customerName = $input.first().json.customer_name || 'there'; // fallback to "there" if no name
+const recordId = $input.first().json.record_id; // HubSpot Record/Deal ID
 
 // ============================================
 // STEP 2: Your email template HTML
@@ -69,7 +70,7 @@ const emailTemplate = `
                                         <a href="https://nps-redirect.vercel.app/api/redirect?score=6&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">6</a>
                                         <a href="https://nps-redirect.vercel.app/api/redirect?score=7&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">7</a>
                                         <a href="https://nps-redirect.vercel.app/api/redirect?score=8&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">8</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=9&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">9</a>
+                                           <a href="https://nps-redirect.vercel.app/api/redirect?score=9&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">9</a>
                                         <a href="https://nps-redirect.vercel.app/api/redirect?score=10&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">10</a>
                                     </td>
                                 </tr>
@@ -123,6 +124,9 @@ emailHtml = emailHtml.replace(/\{\{CUSTOMER_ID\}\}/g, encodeURIComponent(custome
 
 // Replace {{CUSTOMER_EMAIL}} with actual customer email (URL encoded)
 emailHtml = emailHtml.replace(/\{\{CUSTOMER_EMAIL\}\}/g, encodeURIComponent(customerEmail));
+
+// Replace {{RECORD_ID}} with actual HubSpot record ID (URL encoded)
+emailHtml = emailHtml.replace(/\{\{RECORD_ID\}\}/g, encodeURIComponent(recordId));
 
 // Optional: If you add {{CUSTOMER_NAME}} to your template
 emailHtml = emailHtml.replace(/\{\{CUSTOMER_NAME\}\}/g, customerName);

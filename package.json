@@ -1,0 +1,28 @@
+{
+  "name": "free-nps-survey",
+  "version": "1.0.0",
+  "description": "Free NPS survey system using HTML emails and Google Sheets",
+  "main": "send-email-example.js",
+  "scripts": {
+    "test": "node send-email-example.js",
+    "preview": "open email-preview.html || xdg-open email-preview.html || start email-preview.html"
+  },
+  "keywords": [
+    "nps",
+    "survey",
+    "email",
+    "customer-feedback",
+    "google-sheets"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "nodemailer": "^6.9.7"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
+
+

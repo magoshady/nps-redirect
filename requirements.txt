@@ -1,0 +1,33 @@
+# Python dependencies for sending NPS surveys
+
+# Email sending (choose one or more)
+# For basic SMTP (Gmail, etc.) - built-in, no install needed
+
+# For SendGrid
+sendgrid>=6.10.0
+
+# For AWS SES
+boto3>=1.28.0
+
+# Utilities
+python-dotenv>=1.0.0  # For environment variables
+
+# Optional: For CSV handling (built-in csv module is usually enough)
+pandas>=2.0.0  # If you want advanced CSV/data manipulation
+
+# Optional: For scheduled sending
+APScheduler>=3.10.0
+
+# Optional: For database connections
+# psycopg2-binary>=2.9.0  # PostgreSQL
+# mysql-connector-python>=8.0.0  # MySQL
+# pymongo>=4.0.0  # MongoDB
+
+# Optional: For web scraping customer data
+# requests>=2.31.0
+# beautifulsoup4>=4.12.0
+
+# Optional: For API integrations
+# requests>=2.31.0
+
+

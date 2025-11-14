@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NPS Email Preview</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f0f0f0;
+            padding: 20px;
+            margin: 0;
+        }
+        .preview-header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .preview-header h1 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .preview-header p {
+            margin: 5px 0;
+            color: #666;
+        }
+        .preview-note {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+        .preview-note strong {
+            color: #856404;
+        }
+        iframe {
+            width: 100%;
+            height: 700px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="preview-header">
+        <h1>📧 NPS Email Preview</h1>
+        <p><strong>Subject:</strong> How was your installation experience?</p>
+        <p><strong>From:</strong> Your Company &lt;support@yourcompany.com&gt;</p>
+        <p><strong>To:</strong> customer@example.com</p>
+        
+        <div class="preview-note">
+            <strong>⚠️ Note:</strong> The links in this preview won't work until you:
+            <ol style="margin: 10px 0 0 20px; padding: 0;">
+                <li>Deploy the Google Apps Script (see README.md)</li>
+                <li>Replace <code>{{SCRIPT_URL}}</code>, <code>{{CUSTOMER_ID}}</code>, and <code>{{CUSTOMER_EMAIL}}</code> in the template</li>
+            </ol>
+        </div>
+    </div>
+    
+    <iframe src="email-template.html" frameborder="0"></iframe>
+    
+</body>
+</html>
+
+

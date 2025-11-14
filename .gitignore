@@ -1,0 +1,47 @@
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Node modules
+node_modules/
+package-lock.json
+yarn.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Customer data (keep this private!)
+customers.csv
+customer-data.csv
+real-customers.*
+
+# Temp files
+*.tmp
+.cache/
+
+# Sensitive config files
+config.json
+secrets.json
+credentials.json
+
+

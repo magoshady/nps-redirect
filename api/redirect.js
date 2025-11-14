@@ -3,7 +3,7 @@
 
 export default function handler(req, res) {
   // Get parameters from URL
-  const { score, customer, email } = req.query;
+  const { score, customer, email, record } = req.query;
   
   // Validate parameters
   if (!score || !customer || !email) {
@@ -57,7 +57,12 @@ export default function handler(req, res) {
   
   // Build redirect URL to Google Apps Script
   const scriptUrl = 'https://script.google.com/macros/s/AKfycby0Ou-QXI1unShZiRoQUVAqbRn6PZFsgwkvV-df0kLIrm8nizaeZc6VpAJf-SJvt6wahQ/exec';
-  const redirectUrl = `${scriptUrl}?score=${encodeURIComponent(score)}&customer=${encodeURIComponent(customer)}&email=${encodeURIComponent(email)}`;
+  let redirectUrl = `${scriptUrl}?score=${encodeURIComponent(score)}&customer=${encodeURIComponent(customer)}&email=${encodeURIComponent(email)}`;
+  
+  // Add record ID if provided
+  if (record) {
+    redirectUrl += `&record=${encodeURIComponent(record)}`;
+  }
   
   // Server-side redirect (works with Outlook!)
   res.redirect(302, redirectUrl);

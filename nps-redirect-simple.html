@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Redirecting...</title>
+    <script>
+        // Get URL parameters
+        var params = new URLSearchParams(window.location.search);
+        var score = params.get('score');
+        var customer = params.get('customer');
+        var email = params.get('email');
+        
+        // Redirect to Google Apps Script immediately
+        if (score && customer && email) {
+            var scriptUrl = 'https://script.google.com/macros/s/AKfycby0Ou-QXI1unShZiRoQUVAqbRn6PZFsgwkvV-df0kLIrm8nizaeZc6VpAJf-SJvt6wahQ/exec';
+            var redirectUrl = scriptUrl + '?score=' + encodeURIComponent(score) + '&customer=' + encodeURIComponent(customer) + '&email=' + encodeURIComponent(email);
+            window.location.replace(redirectUrl);
+        } else {
+            document.write('<h1>Invalid Link</h1><p>Please use the link from your email.</p>');
+        }
+    </script>
+</head>
+<body>
+    <p>Redirecting...</p>
+</body>
+</html>
+

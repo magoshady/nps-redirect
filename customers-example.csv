@@ -1,0 +1,8 @@
+customer_id,name,email,install_date,product
+CUST-12345,John Doe,john.doe@example.com,2024-11-07,Premium Package
+CUST-12346,Jane Smith,jane.smith@example.com,2024-11-08,Standard Package
+CUST-12347,Bob Johnson,bob.johnson@example.com,2024-11-09,Premium Package
+CUST-12348,Alice Williams,alice.w@example.com,2024-11-10,Basic Package
+CUST-12349,Charlie Brown,charlie@example.com,2024-11-11,Premium Package
+
+
