@@ -60,6 +60,7 @@
         const score = params.get('score');
         const customer = params.get('customer');
         const email = params.get('email');
+        const record = params.get('record');
         
         // Validate parameters
         if (!score || !customer || !email) {
@@ -68,9 +69,14 @@
         } else {
             // Redirect to Google Apps Script
             const scriptUrl = 'https://script.google.com/macros/s/AKfycby0Ou-QXI1unShZiRoQUVAqbRn6PZFsgwkvV-df0kLIrm8nizaeZc6VpAJf-SJvt6wahQ/exec';
-            const redirectUrl = scriptUrl + '?score=' + encodeURIComponent(score) + 
+            let redirectUrl = scriptUrl + '?score=' + encodeURIComponent(score) + 
                                 '&customer=' + encodeURIComponent(customer) + 
                                 '&email=' + encodeURIComponent(email);
+            
+            // Add record ID if provided
+            if (record) {
+                redirectUrl += '&record=' + encodeURIComponent(record);
+            }
             
             // Redirect immediately
             window.location.replace(redirectUrl);
