@@ -9,10 +9,10 @@
 // STEP 1: Get customer data from previous node
 // ============================================
 
-const customerId = $input.first().json.customer_id;
-const customerEmail = $input.first().json.customer_email;
-const customerName = $input.first().json.customer_name || 'there'; // fallback to "there" if no name
-const recordId = $input.first().json.record_id; // HubSpot Record/Deal ID
+const customerId = $input.item.json.customer_id;
+const customerEmail = $input.item.json.customer_email;
+const customerName = $input.item.json.customer_name || 'there'; // fallback to "there" if no name
+const recordId = $input.item.json.record_id; // HubSpot Record/Deal ID
 
 // ============================================
 // STEP 2: Your email template HTML
