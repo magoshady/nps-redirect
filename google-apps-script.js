@@ -34,7 +34,65 @@ function doGet(e) {
       return ContentService.createTextOutput('Invalid score').setMimeType(ContentService.MimeType.TEXT);
     }
     
-    // Record the response
+    // Check for duplicate votes (by Record ID or Email)
+    const duplicate = checkDuplicate(recordId, email);
+    
+    if (duplicate) {
+      // Show "already voted" message
+      return HtmlService.createHtmlOutput(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Already Submitted</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #ffe5e8 0%, #fff9fa 100%);
+              }
+              .container {
+                background: white;
+                padding: 60px 40px;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                text-align: center;
+                max-width: 500px;
+              }
+              h1 {
+                color: #333;
+                font-size: 32px;
+                margin: 0 0 20px 0;
+              }
+              p {
+                color: #666;
+                font-size: 18px;
+                line-height: 1.6;
+                margin: 0;
+              }
+              .emoji {
+                font-size: 64px;
+                margin-bottom: 20px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="emoji">✅</div>
+              <h1>You've Already Responded</h1>
+              <p>Thank you! We've already received your feedback.</p>
+              <p style="margin-top: 20px; font-size: 16px; color: #999;">Your previous response: ${duplicate.score}/10</p>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+    
+    // Record the response (first time)
     recordResponse(score, customerId, email, recordId);
     
     // Redirect to thank you page with the score
@@ -107,6 +165,41 @@ function doGet(e) {
     Logger.log('Error: ' + error.toString());
     return ContentService.createTextOutput('Error processing request').setMimeType(ContentService.MimeType.TEXT);
   }
+}
+
+/**
+ * Check for duplicate votes
+ * Returns the existing response if found, null otherwise
+ */
+function checkDuplicate(recordId, email) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAME);
+  
+  // If sheet doesn't exist yet, no duplicates
+  if (!sheet) {
+    return null;
+  }
+  
+  const data = sheet.getDataRange().getValues();
+  
+  // Skip header row (row 0)
+  for (let i = 1; i < data.length; i++) {
+    const rowRecordId = data[i][7]; // Record ID column (column H, index 7)
+    const rowEmail = data[i][3]; // Email column (column D, index 3)
+    const rowScore = data[i][1]; // Score column (column B, index 1)
+    
+    // Check if this record ID has already voted (prioritize Record ID check)
+    if (recordId && rowRecordId && rowRecordId.toString() === recordId.toString()) {
+      return { score: rowScore, method: 'record_id' };
+    }
+    
+    // Fallback: Check by email if Record ID not available
+    if (!recordId && email && rowEmail && rowEmail.toLowerCase() === email.toLowerCase()) {
+      return { score: rowScore, method: 'email' };
+    }
+  }
+  
+  return null; // No duplicate found
 }
 
 /**
