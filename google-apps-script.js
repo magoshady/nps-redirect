@@ -34,10 +34,19 @@ function doGet(e) {
       return ContentService.createTextOutput('Invalid score').setMimeType(ContentService.MimeType.TEXT);
     }
     
-    // Check for duplicate votes (by Record ID or Email)
-    const duplicate = checkDuplicate(recordId, email);
+    // Acquire lock to prevent race conditions (wait up to 30 seconds)
+    const lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(30000); // Wait up to 30 seconds for lock
+    } catch (e) {
+      return ContentService.createTextOutput('Please try again in a moment').setMimeType(ContentService.MimeType.TEXT);
+    }
     
-    if (duplicate) {
+    try {
+      // Check for duplicate votes (by Record ID or Email) - now with lock protection
+      const duplicate = checkDuplicate(recordId, email);
+      
+      if (duplicate) {
       // Show "already voted" message
       return HtmlService.createHtmlOutput(`
         <!DOCTYPE html>
@@ -90,10 +99,15 @@ function doGet(e) {
           </body>
         </html>
       `);
+      }
+      
+      // Record the response (first time)
+      recordResponse(score, customerId, email, recordId);
+      
+    } finally {
+      // Always release the lock
+      lock.releaseLock();
     }
-    
-    // Record the response (first time)
-    recordResponse(score, customerId, email, recordId);
     
     // Redirect to thank you page with the score
     const redirectUrl = `${THANK_YOU_URL}?score=${score}`;
