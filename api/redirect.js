@@ -56,7 +56,7 @@ export default function handler(req, res) {
   }
   
   // Build redirect URL to Google Apps Script
-  const scriptUrl = 'https://script.google.com/macros/s/AKfycby0Ou-QXI1unShZiRoQUVAqbRn6PZFsgwkvV-df0kLIrm8nizaeZc6VpAJf-SJvt6wahQ/exec';
+  const scriptUrl = 'https://script.google.com/macros/s/AKfycbzUXlUx8TdvomyuZO75QIYkZjwNJ2d1zZQKR20Z1VhLgw7tEE5TBXv4nFqc1u7tceGunw/exec';
   let redirectUrl = `${scriptUrl}?score=${encodeURIComponent(score)}&customer=${encodeURIComponent(customer)}&email=${encodeURIComponent(email)}`;
   
   // Add record ID if provided
