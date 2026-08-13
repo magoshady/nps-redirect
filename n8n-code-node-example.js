@@ -114,7 +114,7 @@ const text = [
   '--',
   CONFIG.fromName,
   CONFIG.businessAddress,
-  'https://impressivebatteries.com.au',
+  'https://impressiveelectrical.com.au',
   '',
   `Unsubscribe from feedback requests: ${unsubscribeUrl}`,
 ].join('\n');

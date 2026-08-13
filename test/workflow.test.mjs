@@ -134,14 +134,18 @@ test('the plaintext part lists all 11 scores', () => {
   }
 });
 
-test('every link stays on the sending domain', () => {
+/**
+ * The company website customers know is impressiveelectrical.com.au, while
+ * mail is sent from impressivebatteries.com.au. A passive footer link to the
+ * company site is a deliberate exception; anything the customer is asked to
+ * act on must match the sending domain.
+ */
+const BRAND_SITE_HOST = 'impressiveelectrical.com.au';
+
+test('every actionable link stays on the sending domain', () => {
   const { json } = runCodeNode();
 
-  // The From address is @impressivebatteries.com.au. Any link pointing
-  // somewhere else is the body/sender mismatch that reads as phishing — the
-  // brand name is allowed to differ, link domains are not.
   const sendingDomain = json.from.split('@')[1];
-
   const urls = [
     ...[...json.html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]),
     ...[...json.text.matchAll(/(https?:\/\/\S+)/g)].map((m) => m[1]),
@@ -151,11 +155,33 @@ test('every link stays on the sending domain', () => {
 
   for (const url of urls) {
     const host = new URL(url).hostname;
+    if (host === BRAND_SITE_HOST) continue; // passive footer link, see above
+
     assert.ok(
       host === sendingDomain || host.endsWith(`.${sendingDomain}`),
       `link points off the sending domain (${sendingDomain}): ${url}`,
     );
   }
+});
+
+test('the unsubscribe link is on the sending domain, not the brand site', () => {
+  const { json } = runCodeNode();
+
+  const sendingDomain = json.from.split('@')[1];
+  const unsubscribe = json.headers['List-Unsubscribe'].match(/<(https?:\/\/[^>]+)>/)[1];
+
+  assert.equal(new URL(unsubscribe).hostname, sendingDomain);
+  assert.match(json.html, /href="https:\/\/impressivebatteries\.com\.au\/unsubscribe/);
+});
+
+test('the brand site appears exactly once, as a passive footer link', () => {
+  const { json } = runCodeNode();
+
+  const hrefs = [...json.html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
+  const brandLinks = hrefs.filter((url) => new URL(url).hostname === BRAND_SITE_HOST);
+
+  assert.equal(brandLinks.length, 1, 'the brand site should only be the footer link');
+  assert.equal(brandLinks[0], `https://${BRAND_SITE_HOST}`, 'it should be a bare site link');
 });
 
 test('the brand name may differ from the sending domain', () => {

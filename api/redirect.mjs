@@ -23,7 +23,7 @@ import {
 
 const BRAND = {
   name: process.env.NPS_BRAND_NAME || 'Impressive Electrical',
-  site: process.env.NPS_BRAND_URL || 'https://impressivebatteries.com.au',
+  site: process.env.NPS_BRAND_URL || 'https://impressiveelectrical.com.au',
   supportEmail: process.env.NPS_SUPPORT_EMAIL || 'support@impressivebatteries.com.au',
   accent: '#e0001a',
 };
