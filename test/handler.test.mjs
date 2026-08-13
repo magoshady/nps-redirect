@@ -105,6 +105,33 @@ test('the submit token is not readable from the form markup', async () => {
   assert.equal(stField[1], '', 'submit token must be injected by JavaScript, not pre-filled');
 });
 
+test('the confirmation page submits in the background', async () => {
+  const res = await get({ score: '9', t: INVITE });
+
+  assert.match(res.body, /id="view"/, 'needs a container to swap');
+  assert.match(res.body, /addEventListener\('submit'/);
+  assert.match(res.body, /fetch\(form\.action/);
+  assert.match(res.body, /Saving your rating/, 'should acknowledge before the write confirms');
+});
+
+test('the inline script is valid JavaScript', () => {
+  // It is built inside a template literal inside a template literal, so a
+  // mis-escaped quote would ship a page whose button does nothing.
+  return get({ score: '7', t: INVITE }).then((res) => {
+    const script = res.body.match(/<script>([\s\S]*?)<\/script>/);
+    assert.ok(script, 'expected an inline script');
+    assert.doesNotThrow(() => new Function(script[1]), 'inline script failed to parse');
+  });
+});
+
+test('the CSP allows the page to call back to itself', async () => {
+  const res = await get({ score: '9', t: INVITE });
+
+  // Without connect-src the background fetch is blocked and the button hangs.
+  assert.match(res.headers['content-security-policy'], /connect-src 'self'/);
+  assert.match(res.headers['content-security-policy'], /default-src 'none'/);
+});
+
 test('GET rejects a score that is not 0-10', async () => {
   for (const score of ['11', '-1', '3.5', 'abc']) {
     const res = await get({ score, t: INVITE });
@@ -217,6 +244,77 @@ test('an Apps Script failure surfaces as an error, not a false thank-you', async
     assert.doesNotMatch(res.body, /Thank you for your feedback/);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+test('a background submission gets JSON, not a page', async () => {
+  const stub = stubAppsScript({ status: 'recorded', score: 9, category: 'Promoter' });
+  try {
+    const res = mockRes();
+    const st = createSubmitToken(INVITE, 9, SECRET, Date.now() - MIN_DWELL_MS - 500);
+    await handler(
+      { method: 'POST', query: {}, body: { score: '9', t: INVITE, st, ajax: '1' } },
+      res,
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /application\/json/);
+
+    const payload = JSON.parse(res.body);
+    assert.equal(payload.score, 9);
+    assert.equal(payload.status, 'recorded');
+    assert.ok(payload.closing, 'the page needs a closing line to render');
+  } finally {
+    stub.restore();
+  }
+});
+
+test('an Accept header alone is enough to get JSON', async () => {
+  const stub = stubAppsScript({ status: 'recorded', score: 5, category: 'Detractor' });
+  try {
+    const res = mockRes();
+    const st = createSubmitToken(INVITE, 5, SECRET, Date.now() - MIN_DWELL_MS - 500);
+    await handler(
+      {
+        method: 'POST',
+        query: {},
+        headers: { accept: 'application/json' },
+        body: { score: '5', t: INVITE, st },
+      },
+      res,
+    );
+
+    assert.match(res.headers['content-type'], /application\/json/);
+  } finally {
+    stub.restore();
+  }
+});
+
+test('a rejected background submission gets JSON too, not an HTML page', async () => {
+  const res = mockRes();
+  await handler(
+    { method: 'POST', query: {}, body: { score: '9', t: INVITE, st: '', ajax: '1' } },
+    res,
+  );
+
+  assert.equal(res.statusCode, 400);
+  assert.match(res.headers['content-type'], /application\/json/);
+  assert.ok(JSON.parse(res.body).error, 'the client needs a reason, not markup');
+});
+
+test('a revision reports the previous score to the background caller', async () => {
+  const stub = stubAppsScript({ status: 'revised', score: 9, category: 'Promoter', previousScore: 0 });
+  try {
+    const res = mockRes();
+    const st = createSubmitToken(INVITE, 9, SECRET, Date.now() - MIN_DWELL_MS - 500);
+    await handler(
+      { method: 'POST', query: {}, body: { score: '9', t: INVITE, st, ajax: '1' } },
+      res,
+    );
+
+    assert.equal(JSON.parse(res.body).previousScore, 0);
+  } finally {
+    stub.restore();
   }
 });
 

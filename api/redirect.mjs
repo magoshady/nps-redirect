@@ -10,6 +10,9 @@
  * products (Defender Safe Links, Proofpoint, Mimecast) fetch the URL in the
  * email *and* follow the links on the page it returns, but they issue GET and
  * HEAD requests only.
+ *
+ * POST answers JSON when asked and HTML otherwise, so the confirmation page can
+ * submit in the background while the plain form still works without JavaScript.
  */
 
 import {
@@ -35,7 +38,7 @@ const N8N_WEBHOOK_URL = process.env.NPS_N8N_WEBHOOK_URL;
 /** Apps Script writes the row before it replies, so this only bounds the wait. */
 const APPS_SCRIPT_TIMEOUT_MS = 12_000;
 
-/** The customer is already waiting on this, so keep it short. */
+/** Fire-and-forget; the vote is already safe by the time this runs. */
 const WEBHOOK_TIMEOUT_MS = 2_500;
 
 export const config = { maxDuration: 20 };
@@ -62,19 +65,20 @@ export default async function handler(req, res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
+      + "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
 
   if (!SECRET || !APPS_SCRIPT_URL) {
     console.error('Missing NPS_SECRET or NPS_APPS_SCRIPT_URL environment variable');
-    return send(res, 500, page('Something went wrong', '<p>We could not load the survey just now. Please try again shortly.</p>'));
+    return sendHtml(res, 500, page('Something went wrong', '<p>We could not load the survey just now. Please try again shortly.</p>'));
   }
 
   if (req.method === 'GET' || req.method === 'HEAD') return renderConfirmation(req, res);
   if (req.method === 'POST') return recordVote(req, res);
 
   res.setHeader('Allow', 'GET, POST');
-  return send(res, 405, page('Not allowed', '<p>That request is not supported.</p>'));
+  return sendHtml(res, 405, page('Not allowed', '<p>That request is not supported.</p>'));
 }
 
 /* ---------------------------------------------------------------- GET ---- */
@@ -83,11 +87,11 @@ function renderConfirmation(req, res) {
   const score = parseScore(req.query.score);
   const inviteToken = typeof req.query.t === 'string' ? req.query.t : '';
 
-  if (score === null) return send(res, 400, invalidLinkPage());
+  if (score === null) return sendHtml(res, 400, invalidLinkPage());
 
   const invite = verifyInviteToken(inviteToken, SECRET);
   if (!invite.ok) {
-    return send(res, 400, invite.reason === 'expired' ? expiredLinkPage() : invalidLinkPage());
+    return sendHtml(res, 400, invite.reason === 'expired' ? expiredLinkPage() : invalidLinkPage());
   }
 
   const submitToken = createSubmitToken(inviteToken, score, SECRET);
@@ -111,55 +115,111 @@ function renderConfirmation(req, res) {
           Your browser has JavaScript turned off, so we can't submit this rating.
           Please open the email in another browser, or reply to it and we'll record your score manually.
         </p>
-      </noscript>
-      <script>
-        (function () {
-          var field = document.getElementById('st');
-          var button = document.getElementById('nps-submit');
-          field.value = atob('${Buffer.from(submitToken).toString('base64')}');
-          button.disabled = false;
-          document.getElementById('nps-form').addEventListener('submit', function () {
-            button.disabled = true;
-            button.textContent = 'Sending\\u2026';
-          });
-        })();
-      </script>`;
+      </noscript>`;
 
-  return send(res, 200, page('Confirm your rating', body));
+  return sendHtml(res, 200, page('Confirm your rating', body, clientScript(submitToken, score)));
+}
+
+/**
+ * Submits in the background and acknowledges immediately.
+ *
+ * Writing to the sheet goes through Apps Script, which takes several seconds on
+ * a cold start regardless of what we do here. Making the customer watch a
+ * spinner for that long reads as broken, so the page commits to the answer as
+ * soon as they press the button and reconciles when the write confirms.
+ */
+function clientScript(submitToken, score) {
+  return `
+      (function () {
+        var form = document.getElementById('nps-form');
+        var button = document.getElementById('nps-submit');
+        var view = document.getElementById('view');
+
+        document.getElementById('st').value = atob('${Buffer.from(submitToken).toString('base64')}');
+        button.disabled = false;
+
+        if (!window.fetch || !window.FormData || !window.URLSearchParams) return;
+
+        function scoreBlock(value) {
+          return '<div class="score">' + value + '<span class="out-of">/10</span></div>';
+        }
+
+        form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          button.disabled = true;
+
+          view.innerHTML =
+            '<h1>Thank you for your feedback</h1>' +
+            scoreBlock(${score}) +
+            '<p class="note" id="nps-status">Saving your rating\\u2026</p>';
+
+          var data = new URLSearchParams(new FormData(form));
+          data.append('ajax', '1');
+
+          fetch(form.action, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json' },
+            body: data
+          })
+            .then(function (response) {
+              return response.json().then(function (json) {
+                return { ok: response.ok, body: json };
+              });
+            })
+            .then(function (result) {
+              if (!result.ok) throw new Error('rejected');
+
+              var html = '<h1>Thank you for your feedback</h1>' + scoreBlock(result.body.score);
+              if (result.body.previousScore !== undefined && result.body.previousScore !== '') {
+                html += '<p class="note">We\\'ve updated your earlier response of ' +
+                  result.body.previousScore + '/10.</p>';
+              }
+              html += '<p>' + result.body.closing + '</p>' +
+                '<p class="note">You can close this page now.</p>';
+              view.innerHTML = html;
+            })
+            .catch(function () {
+              view.innerHTML =
+                '<h1>We could not save that</h1>' +
+                '<p>Something went wrong while saving your rating.</p>' +
+                '<p class="note">Please try the link in your email again, or email us at ' +
+                '${escapeHtml(BRAND.supportEmail)} and we will record it for you.</p>';
+            });
+        });
+      })();`;
 }
 
 /* --------------------------------------------------------------- POST ---- */
 
 async function recordVote(req, res) {
   const form = req.body && typeof req.body === 'object' ? req.body : {};
+  const wantsJson =
+    form.ajax === '1' || String(req.headers?.accept || '').includes('application/json');
+
   const score = parseScore(form.score);
   const inviteToken = typeof form.t === 'string' ? form.t : '';
   const submitToken = typeof form.st === 'string' ? form.st : '';
 
-  if (score === null) return send(res, 400, invalidLinkPage());
+  if (score === null) return fail(res, wantsJson, 400, 'invalid_link', invalidLinkPage());
 
   const invite = verifyInviteToken(inviteToken, SECRET);
   if (!invite.ok) {
-    return send(res, 400, invite.reason === 'expired' ? expiredLinkPage() : invalidLinkPage());
+    const html = invite.reason === 'expired' ? expiredLinkPage() : invalidLinkPage();
+    return fail(res, wantsJson, 400, invite.reason, html);
   }
 
   const submit = verifySubmitToken(submitToken, inviteToken, score, SECRET);
   if (!submit.ok) {
     // Anything landing here is an automated submission or a stale tab.
     console.warn('Rejected submission', { reason: submit.reason, customer: invite.customer });
-    return send(res, 400, staleFormPage());
+    return fail(res, wantsJson, 400, submit.reason, staleFormPage());
   }
 
   const ts = Date.now();
-  const vote = {
-    score,
-    customer: invite.customer,
-    email: invite.email,
-    record: invite.record,
-    ts,
-  };
+  const vote = { score, customer: invite.customer, email: invite.email, record: invite.record, ts };
 
   let result;
+  const startedAt = Date.now();
   try {
     const response = await postJson(
       APPS_SCRIPT_URL,
@@ -167,6 +227,8 @@ async function recordVote(req, res) {
       APPS_SCRIPT_TIMEOUT_MS,
     );
     const text = await response.text();
+    console.log(`Apps Script replied in ${Date.now() - startedAt}ms`);
+
     try {
       result = JSON.parse(text);
     } catch {
@@ -181,20 +243,21 @@ async function recordVote(req, res) {
     // A timeout is not the same as a rejection. Apps Script appends the row
     // before it replies, so when the wait runs out the vote has almost
     // certainly landed — and telling the customer it failed sends them back to
-    // re-submit a rating we already hold. Report the outage, thank the
-    // customer, and let the sheet be the record.
+    // re-submit a rating we already hold.
     if (error.name === 'AbortError') {
-      console.error('Apps Script timed out; the vote was most likely recorded', {
+      console.error(`Apps Script timed out after ${Date.now() - startedAt}ms; vote likely recorded`, {
         customer: invite.customer,
         score,
       });
-      return send(res, 200, thankYouPage(score, { status: 'recorded' }));
+      return succeed(res, wantsJson, score, { status: 'recorded' });
     }
 
-    console.error('Failed to record vote', error);
-    return send(
+    console.error(`Failed to record vote after ${Date.now() - startedAt}ms`, error);
+    return fail(
       res,
+      wantsJson,
       502,
+      'save_failed',
       page(
         'We could not save that',
         `<p>Something went wrong while saving your rating. Please try the link again in a moment.</p>
@@ -205,7 +268,7 @@ async function recordVote(req, res) {
 
   await notifyN8n(vote, result);
 
-  return send(res, 200, thankYouPage(score, result));
+  return succeed(res, wantsJson, score, result);
 }
 
 /**
@@ -219,6 +282,7 @@ async function recordVote(req, res) {
 async function notifyN8n(vote, result) {
   if (!N8N_WEBHOOK_URL) return;
 
+  const startedAt = Date.now();
   try {
     const response = await postJson(
       N8N_WEBHOOK_URL,
@@ -234,29 +298,49 @@ async function notifyN8n(vote, result) {
       },
       WEBHOOK_TIMEOUT_MS,
     );
-    if (!response.ok) console.warn('n8n webhook returned', response.status);
+    console.log(`n8n webhook replied ${response.status} in ${Date.now() - startedAt}ms`);
   } catch (error) {
-    console.warn('n8n webhook failed; the vote is recorded regardless', error.name);
+    console.warn(`n8n webhook failed after ${Date.now() - startedAt}ms (${error.name});`
+      + ' the vote is recorded regardless');
   }
+}
+
+/* --------------------------------------------------------------- replies -- */
+
+function closingLine(score) {
+  if (score >= 9) return "We're really glad you had a good experience.";
+  if (score >= 7) return "Thanks for the honest score — we'll keep working at it.";
+  return "We're sorry we fell short. Someone from our team will be in touch.";
+}
+
+function succeed(res, wantsJson, score, result) {
+  if (wantsJson) {
+    return sendJson(res, 200, {
+      status: result.status,
+      score,
+      previousScore: result.previousScore === undefined ? '' : result.previousScore,
+      closing: closingLine(score),
+    });
+  }
+  return sendHtml(res, 200, thankYouPage(score, result));
+}
+
+function fail(res, wantsJson, status, reason, html) {
+  if (wantsJson) return sendJson(res, status, { error: reason });
+  return sendHtml(res, status, html);
 }
 
 /* --------------------------------------------------------------- pages --- */
 
 function thankYouPage(score, result) {
   const revised = result.status === 'revised';
-  const closing =
-    score >= 9
-      ? "We're really glad you had a good experience."
-      : score >= 7
-        ? "Thanks for the honest score — we'll keep working at it."
-        : "We're sorry we fell short. Someone from our team will be in touch.";
 
   return page(
     'Thank you',
     `<h1>Thank you for your feedback</h1>
      <div class="score">${score}<span class="out-of">/10</span></div>
      ${revised ? `<p class="note">We've updated your earlier response of ${escapeHtml(result.previousScore)}/10.</p>` : ''}
-     <p>${closing}</p>
+     <p>${closingLine(score)}</p>
      <p class="note">You can close this page now.</p>`,
   );
 }
@@ -285,7 +369,7 @@ const staleFormPage = () =>
      <p class="note">Go back to the email and click your rating again — it only takes a second.</p>`,
   );
 
-function page(title, body) {
+function page(title, body, script = '') {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -336,17 +420,23 @@ function page(title, body) {
 <body>
   <main class="card">
     <div class="brand">${escapeHtml(BRAND.name)}</div>
-    ${body}
+    <div id="view">${body}</div>
     <div class="footer">
       Sent by ${escapeHtml(BRAND.name)} ·
       <a href="${escapeHtml(BRAND.site)}">${escapeHtml(BRAND.site.replace(/^https?:\/\//, ''))}</a>
     </div>
   </main>
+${script ? `<script>${script}</script>` : ''}
 </body>
 </html>`;
 }
 
-function send(res, status, html) {
+function sendHtml(res, status, html) {
   res.status(status).setHeader('Content-Type', 'text/html; charset=utf-8');
   return res.send(html);
+}
+
+function sendJson(res, status, payload) {
+  res.status(status).setHeader('Content-Type', 'application/json; charset=utf-8');
+  return res.send(JSON.stringify(payload));
 }

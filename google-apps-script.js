@@ -218,31 +218,35 @@ function getOrCreateSheet() {
  * because one person can hold several deals; email is the fallback.
  */
 function findExistingRow(sheet, recordId, email) {
-  var data = sheet.getDataRange().getValues();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
 
-  for (var i = 1; i < data.length; i++) {
-    var rowRecordId = data[i][7];
-    var rowEmail = data[i][3];
+  // TextFinder searches on Google's side. Pulling every row across the wire to
+  // find one cell is the single slowest thing this script used to do, and it
+  // got slower with every response recorded — the customer waits on it.
+  var match = null;
 
-    var matchesRecord =
-      recordId && rowRecordId && rowRecordId.toString() === recordId.toString();
-    var matchesEmail =
-      !recordId &&
-      email &&
-      rowEmail &&
-      rowEmail.toString().toLowerCase() === email.toLowerCase();
-
-    if (matchesRecord || matchesEmail) {
-      return {
-        row: i + 1,
-        score: data[i][1],
-        revisions: data[i][8],
-        originalScore: data[i][9],
-      };
-    }
+  if (recordId) {
+    match = sheet
+      .getRange(2, 8, lastRow - 1, 1) // column H, Record ID
+      .createTextFinder(recordId.toString())
+      .matchEntireCell(true)
+      .findNext();
+  } else if (email) {
+    match = sheet
+      .getRange(2, 4, lastRow - 1, 1) // column D, Email
+      .createTextFinder(email)
+      .matchEntireCell(true)
+      .matchCase(false)
+      .findNext();
   }
 
-  return null;
+  if (!match) return null;
+
+  var row = match.getRow();
+  var values = sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0];
+
+  return { row: row, score: values[1], revisions: values[8], originalScore: values[9] };
 }
 
 function getCategory(score) {
