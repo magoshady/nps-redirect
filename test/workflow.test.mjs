@@ -5,7 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const workflow = JSON.parse(readFileSync(new URL('../n8n-workflow.json', import.meta.url), 'utf8'));
 
@@ -194,6 +194,36 @@ test('the brand name may differ from the sending domain', () => {
   // carry no weight in SPF, DKIM or DMARC.
   assert.equal(json.fromName, 'Impressive Electrical');
   assert.match(json.from, /@impressivebatteries\.com\.au$/);
+});
+
+test('every path the email links to actually has a route', () => {
+  // The unsubscribe link shipped pointing at /unsubscribe while the function
+  // was only reachable at /api/unsubscribe, so customers got a 404. The email
+  // and the routing config have to be checked against each other.
+  const vercelConfig = JSON.parse(
+    readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'),
+  );
+  const rewrites = new Set((vercelConfig.rewrites || []).map((rule) => rule.source));
+  const routes = new Set(
+    readdirSync(new URL('../api', import.meta.url))
+      .filter((name) => name.endsWith('.mjs'))
+      .map((name) => `/api/${name.replace(/\.mjs$/, '')}`),
+  );
+
+  const { json } = runCodeNode();
+  const paths = new Set(
+    [...json.html.matchAll(/href="(https:\/\/nps\.[^"]+)"/g)]
+      .map((m) => new URL(m[1]).pathname),
+  );
+
+  assert.ok(paths.size > 0, 'expected links on the survey host');
+
+  for (const path of paths) {
+    assert.ok(
+      rewrites.has(path) || routes.has(path),
+      `${path} is linked from the email but has no rewrite in vercel.json and no api/ handler`,
+    );
+  }
 });
 
 test('the customer email address never appears in a rating URL', () => {
