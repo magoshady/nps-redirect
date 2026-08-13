@@ -36,11 +36,11 @@ const CONFIG = {
   fromName: 'Impressive Electrical',
   subject: 'How was your installation?',
   businessAddress: 'Unit 2, 8-18 Kareena Rd, Miranda, NSW',
-  // Keep this on the same domain as `from`. A link to a third domain is the
-  // mismatch filters read as phishing — the display name above is free to be
-  // the trading name customers recognise, because names carry no weight in
-  // SPF, DKIM or DMARC.
-  unsubscribeBaseUrl: 'https://impressivebatteries.com.au/unsubscribe',
+  // Handled by the survey site, on a subdomain of the sending domain. A link
+  // to a third domain is the mismatch filters read as phishing — the display
+  // name above is free to be the trading name customers recognise, because
+  // names carry no weight in SPF, DKIM or DMARC.
+  unsubscribeBaseUrl: 'https://nps.impressivebatteries.com.au/unsubscribe',
 };
 
 // ============================================

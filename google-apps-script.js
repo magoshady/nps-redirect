@@ -18,6 +18,8 @@
 
 // Configuration
 const SHEET_NAME = 'NPS Responses';
+const UNSUBSCRIBE_SHEET_NAME = 'Unsubscribes';
+const UNSUBSCRIBE_HEADERS = ['Timestamp', 'Email', 'Customer ID', 'Record ID'];
 
 /** How stale a signed vote may be before we reject it as a replay. */
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
@@ -76,46 +78,154 @@ function doPost(e) {
     }
 
     var body = JSON.parse(e.postData.contents);
-    var score = parseInt(body.score, 10);
 
-    if (isNaN(score) || score < 0 || score > 10) {
-      return jsonResponse({ status: 'error', reason: 'invalid_score' });
-    }
-    if (!body.customer || !body.email || !body.ts) {
-      return jsonResponse({ status: 'error', reason: 'incomplete' });
-    }
-    if (Math.abs(Date.now() - Number(body.ts)) > MAX_SIGNATURE_AGE_MS) {
+    if (!body.ts || Math.abs(Date.now() - Number(body.ts)) > MAX_SIGNATURE_AGE_MS) {
       return jsonResponse({ status: 'error', reason: 'stale' });
     }
 
-    var canonical = [score, body.customer, body.email, body.record || '', body.ts].join('|');
-    if (!signaturesMatch(body.sig, canonical, secret)) {
-      Logger.log('Rejected unsigned or mis-signed vote for ' + body.customer);
-      return jsonResponse({ status: 'error', reason: 'bad_signature' });
-    }
-
-    var lock = LockService.getScriptLock();
-    try {
-      lock.waitLock(30000);
-    } catch (lockError) {
-      return jsonResponse({ status: 'error', reason: 'busy' });
-    }
-
-    try {
-      // Nothing slow may happen between the write and the reply. The n8n
-      // notification used to run here, synchronously and inside the lock, so a
-      // webhook that responds only when its workflow finishes held this
-      // request open long enough for the caller to time out — the vote saved,
-      // but the customer was shown a failure. The survey site fires that
-      // webhook now, after it has replied to the customer.
-      return jsonResponse(recordResponse(score, body.customer, body.email, body.record || ''));
-    } finally {
-      lock.releaseLock();
+    switch (body.action) {
+      case 'unsubscribe':
+        return handleUnsubscribe(body, secret);
+      case 'suppressions':
+        return handleSuppressions(body, secret);
+      default:
+        return handleVote(body, secret);
     }
   } catch (error) {
     Logger.log('doPost error: ' + error.toString());
     return jsonResponse({ status: 'error', reason: 'exception' });
   }
+}
+
+function handleVote(body, secret) {
+  var score = parseInt(body.score, 10);
+
+  if (isNaN(score) || score < 0 || score > 10) {
+    return jsonResponse({ status: 'error', reason: 'invalid_score' });
+  }
+  if (!body.customer || !body.email) {
+    return jsonResponse({ status: 'error', reason: 'incomplete' });
+  }
+
+  var canonical = [score, body.customer, body.email, body.record || '', body.ts].join('|');
+  if (!signaturesMatch(body.sig, canonical, secret)) {
+    Logger.log('Rejected unsigned or mis-signed vote for ' + body.customer);
+    return jsonResponse({ status: 'error', reason: 'bad_signature' });
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (lockError) {
+    return jsonResponse({ status: 'error', reason: 'busy' });
+  }
+
+  try {
+    // Nothing slow may happen between the write and the reply. The n8n
+    // notification used to run here, synchronously and inside the lock, so a
+    // webhook that responds only when its workflow finishes held this request
+    // open long enough for the caller to time out — the vote saved, but the
+    // customer was shown a failure. The survey site fires that webhook now,
+    // after it has replied to the customer.
+    return jsonResponse(recordResponse(score, body.customer, body.email, body.record || ''));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Record an opt-out. Idempotent — unsubscribing twice is not an error and must
+ * never be reported as one.
+ *
+ * An expired invite token is still honoured upstream, because refusing to stop
+ * emailing someone on the grounds that their link is old would be the wrong way
+ * round.
+ */
+function handleUnsubscribe(body, secret) {
+  if (!body.email) {
+    return jsonResponse({ status: 'error', reason: 'incomplete' });
+  }
+
+  var canonical = ['unsubscribe', body.customer || '', body.email, body.record || '', body.ts].join('|');
+  if (!signaturesMatch(body.sig, canonical, secret)) {
+    Logger.log('Rejected unsigned or mis-signed unsubscribe for ' + body.email);
+    return jsonResponse({ status: 'error', reason: 'bad_signature' });
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (lockError) {
+    return jsonResponse({ status: 'error', reason: 'busy' });
+  }
+
+  try {
+    var sheet = getOrCreateUnsubscribeSheet();
+    var email = body.email.toString().trim();
+
+    if (!findUnsubscribeRow(sheet, email)) {
+      sheet.appendRow([new Date().toISOString(), email, body.customer || '', body.record || '']);
+    }
+
+    return jsonResponse({ status: 'unsubscribed', email: email });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * The suppression list, so the survey site can refuse to mint a rating link for
+ * someone who has opted out.
+ */
+function handleSuppressions(body, secret) {
+  if (!signaturesMatch(body.sig, ['suppressions', body.ts].join('|'), secret)) {
+    return jsonResponse({ status: 'error', reason: 'bad_signature' });
+  }
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(UNSUBSCRIBE_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return jsonResponse({ status: 'ok', emails: [] });
+  }
+
+  var values = sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).getValues();
+  var emails = [];
+
+  for (var i = 0; i < values.length; i++) {
+    var email = String(values[i][0] || '').trim().toLowerCase();
+    if (email) emails.push(email);
+  }
+
+  return jsonResponse({ status: 'ok', emails: emails });
+}
+
+function getOrCreateUnsubscribeSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(UNSUBSCRIBE_SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(UNSUBSCRIBE_SHEET_NAME);
+    sheet.appendRow(UNSUBSCRIBE_HEADERS);
+    sheet
+      .getRange(1, 1, 1, UNSUBSCRIBE_HEADERS.length)
+      .setFontWeight('bold')
+      .setBackground('#e0001a')
+      .setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+  }
+
+  return sheet;
+}
+
+function findUnsubscribeRow(sheet, email) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  return sheet
+    .getRange(2, 2, lastRow - 1, 1) // column B, Email
+    .createTextFinder(email)
+    .matchEntireCell(true)
+    .matchCase(false)
+    .findNext();
 }
 
 /**

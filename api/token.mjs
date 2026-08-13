@@ -13,11 +13,70 @@
  *   → { "token": "...", "expiresAt": "...", "ratingUrls": { "0": "...", ... } }
  */
 
-import { INVITE_TTL_MS, createInviteToken, timingSafeCompare } from './_lib/token.mjs';
+import {
+  INVITE_TTL_MS,
+  createInviteToken,
+  signRequest,
+  timingSafeCompare,
+} from './_lib/token.mjs';
 
 const SECRET = process.env.NPS_SECRET;
 const API_KEY = process.env.NPS_API_KEY;
+const APPS_SCRIPT_URL = process.env.NPS_APPS_SCRIPT_URL;
 const PUBLIC_URL = process.env.NPS_PUBLIC_URL || 'https://nps.impressivebatteries.com.au';
+
+const SUPPRESSION_CACHE_MS = 5 * 60 * 1000;
+const SUPPRESSION_TIMEOUT_MS = 8_000;
+
+let suppressionCache = { emails: null, fetchedAt: 0 };
+
+/**
+ * Who has opted out.
+ *
+ * Cached because a batch send asks for one token per customer, and each lookup
+ * is an Apps Script round trip. Fails open: if the list cannot be read we still
+ * mint the token, because a broken lookup must not silently stop every survey.
+ * The real suppression happens in HubSpot off the back of the unsubscribe
+ * webhook — this is the backstop for when that sync misses.
+ */
+async function suppressedEmails() {
+  const fresh = Date.now() - suppressionCache.fetchedAt < SUPPRESSION_CACHE_MS;
+  if (suppressionCache.emails && fresh) return suppressionCache.emails;
+  if (!APPS_SCRIPT_URL) return new Set();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUPPRESSION_TIMEOUT_MS);
+
+  try {
+    const ts = Date.now();
+    const response = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'suppressions',
+        ts,
+        sig: signRequest(['suppressions', ts], SECRET),
+      }),
+      signal: controller.signal,
+    });
+
+    const result = JSON.parse(await response.text());
+    if (result.status !== 'ok' || !Array.isArray(result.emails)) {
+      throw new Error(result.reason || 'unexpected_response');
+    }
+
+    suppressionCache = {
+      emails: new Set(result.emails.map((email) => String(email).trim().toLowerCase())),
+      fetchedAt: Date.now(),
+    };
+    return suppressionCache.emails;
+  } catch (error) {
+    console.warn(`Suppression list unavailable (${error.name}); minting the token anyway`);
+    return suppressionCache.emails || new Set();
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const json = (res, status, payload) => {
   res.status(status).setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -53,6 +112,14 @@ export default async function handler(req, res) {
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json(res, 400, { error: 'email is not a valid address' });
+  }
+
+  if ((await suppressedEmails()).has(email.toLowerCase())) {
+    console.log(`Refused to mint a survey link for an unsubscribed contact (${customer})`);
+    return json(res, 409, {
+      error: 'unsubscribed',
+      detail: 'This contact has opted out of feedback requests.',
+    });
   }
 
   const issuedAt = Date.now();

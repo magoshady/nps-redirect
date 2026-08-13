@@ -110,7 +110,7 @@ test('no placeholder survives into the sent email', () => {
 test('every rating link points at our own domain and carries the token', () => {
   const { json } = runCodeNode();
 
-  const hrefs = [...json.html.matchAll(/href="(https:\/\/nps\.[^"]+)"/g)].map((m) => m[1]);
+  const hrefs = [...json.html.matchAll(/href="(https:\/\/nps\.[^"]*\/r\?[^"]+)"/g)].map((m) => m[1]);
   assert.equal(hrefs.length, 11, 'expected 11 rating links');
 
   for (let score = 0; score <= 10; score++) {
@@ -170,8 +170,11 @@ test('the unsubscribe link is on the sending domain, not the brand site', () => 
   const sendingDomain = json.from.split('@')[1];
   const unsubscribe = json.headers['List-Unsubscribe'].match(/<(https?:\/\/[^>]+)>/)[1];
 
-  assert.equal(new URL(unsubscribe).hostname, sendingDomain);
-  assert.match(json.html, /href="https:\/\/impressivebatteries\.com\.au\/unsubscribe/);
+  assert.ok(
+    new URL(unsubscribe).hostname.endsWith(sendingDomain),
+    `unsubscribe must stay on ${sendingDomain}, got ${unsubscribe}`,
+  );
+  assert.match(json.html, /href="https:\/\/nps\.impressivebatteries\.com\.au\/unsubscribe/);
 });
 
 test('the brand site appears exactly once, as a passive footer link', () => {
@@ -215,7 +218,7 @@ test('a customer name containing markup is escaped', () => {
 test('List-Unsubscribe headers are emitted', () => {
   const { json } = runCodeNode();
 
-  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/impressivebatteries\.com\.au/);
+  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/nps\.impressivebatteries\.com\.au/);
   assert.equal(json.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
 });
 

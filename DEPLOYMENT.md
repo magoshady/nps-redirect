@@ -177,6 +177,40 @@ It returns `token`, `expiresAt` and a `ratingUrls` map for scores 0-10.
 credential. Tokens already in customers' inboxes keep working, because they are
 signed with `NPS_SECRET`, which hasn't changed.
 
+## 4b. Unsubscribe
+
+The footer link goes to `nps.impressivebatteries.com.au/unsubscribe?t=…` — the
+survey site, on a subdomain of the sending domain.
+
+It is protected exactly like the rating links: a confirmation page, then a
+POST carrying a token that JavaScript injects. An unsubscribe link is a state
+change sitting in an inbox, and mail scanners click every link they find, so
+without that a scanner would opt out customers who never asked to leave.
+
+An opt-out does two things:
+
+1. **Writes a row to the `Unsubscribes` tab** of the sheet — the audit trail.
+   The tab is created on first use.
+2. **Fires the n8n webhook** with `type: "unsubscribe"`, so the contact can be
+   suppressed where your customer list actually lives.
+
+**Wire up the HubSpot side.** In the n8n workflow that receives the webhook,
+branch on `type`:
+
+- `type` absent or anything else → the existing vote handling
+- `type == "unsubscribe"` → set a *do not email* property on the HubSpot contact,
+  and make sure the workflow that sends surveys filters on it
+
+That branch is what actually stops the next email. As a backstop, `/api/token`
+refuses to mint a rating link for any address on the `Unsubscribes` tab, so a
+missed HubSpot sync still cannot produce a survey to someone who opted out. That
+check reads the list once every five minutes per instance, and fails open — a
+broken lookup must not silently stop every survey.
+
+Your `Get NPS Token` node will return **409** for a suppressed contact. Set its
+**On Error** to *Continue (using error output)* and leave the error branch
+unconnected, so those contacts are skipped rather than failing the run.
+
 ## 5. Email authentication
 
 The domain move only pays off if the mail itself authenticates. Current state

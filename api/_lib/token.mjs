@@ -145,3 +145,38 @@ export function signVote({ score, customer, email, record, ts }, secret) {
   const canonical = [score, customer, email, record || '', ts].join('|');
   return crypto.createHmac('sha256', secret).update(canonical).digest('base64url');
 }
+
+/**
+ * Signature for the non-vote Apps Script calls. Kept separate from signVote so
+ * a signature minted for one action can never be replayed as another.
+ */
+export function signRequest(parts, secret) {
+  return crypto.createHmac('sha256', secret).update(parts.join('|')).digest('base64url');
+}
+
+/**
+ * A submit token for something other than a rating — unsubscribing, for now.
+ *
+ * Same shape and same guarantees as the vote submit token: bound to the
+ * customer's invite token, injected by JavaScript so a crawler cannot produce
+ * one, and rejected if it comes back faster than a person could have read the
+ * page. An unsubscribe link is a state change sitting in an inbox, so it needs
+ * exactly the protection the rating links needed.
+ */
+export function createActionToken(inviteToken, action, secret, now = Date.now()) {
+  const body = b64url(JSON.stringify({ h: fingerprint(inviteToken), a: action, i: now }));
+  return `${body}.${sign(body, secret)}`;
+}
+
+export function verifyActionToken(actionToken, inviteToken, action, secret, now = Date.now()) {
+  const payload = unpack(actionToken, secret);
+  if (!payload) return { ok: false, reason: 'invalid' };
+  if (payload.a !== action) return { ok: false, reason: 'action_mismatch' };
+  if (payload.h !== fingerprint(inviteToken)) return { ok: false, reason: 'token_mismatch' };
+
+  const age = now - payload.i;
+  if (typeof payload.i !== 'number' || age > SUBMIT_TTL_MS) return { ok: false, reason: 'expired' };
+  if (age < MIN_DWELL_MS) return { ok: false, reason: 'too_fast' };
+
+  return { ok: true, issuedAt: payload.i };
+}
