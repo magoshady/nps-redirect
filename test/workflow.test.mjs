@@ -126,6 +126,39 @@ test('the plaintext part lists all 11 scores', () => {
   }
 });
 
+test('every link stays on the sending domain', () => {
+  const { json } = runCodeNode();
+
+  // The From address is @impressivebatteries.com.au. Any link pointing
+  // somewhere else is the body/sender mismatch that reads as phishing — the
+  // brand name is allowed to differ, link domains are not.
+  const sendingDomain = json.from.split('@')[1];
+
+  const urls = [
+    ...[...json.html.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((m) => m[1]),
+    ...[...json.text.matchAll(/(https?:\/\/\S+)/g)].map((m) => m[1]),
+  ];
+
+  assert.ok(urls.length > 0, 'expected to find links');
+
+  for (const url of urls) {
+    const host = new URL(url).hostname;
+    assert.ok(
+      host === sendingDomain || host.endsWith(`.${sendingDomain}`),
+      `link points off the sending domain (${sendingDomain}): ${url}`,
+    );
+  }
+});
+
+test('the brand name may differ from the sending domain', () => {
+  const { json } = runCodeNode();
+
+  // Deliberate: customers recognise "Impressive Electrical", and display names
+  // carry no weight in SPF, DKIM or DMARC.
+  assert.equal(json.fromName, 'Impressive Electrical');
+  assert.match(json.from, /@impressivebatteries\.com\.au$/);
+});
+
 test('the customer email address never appears in a rating URL', () => {
   const { json } = runCodeNode();
 
@@ -148,7 +181,7 @@ test('a customer name containing markup is escaped', () => {
 test('List-Unsubscribe headers are emitted', () => {
   const { json } = runCodeNode();
 
-  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/impressiveelectrical\.com\.au/);
+  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/impressivebatteries\.com\.au/);
   assert.equal(json.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
 });
 

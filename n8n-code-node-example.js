@@ -31,7 +31,11 @@ const CONFIG = {
   fromName: 'Impressive Electrical',
   subject: 'How was your installation?',
   businessAddress: 'Unit 2, 8-18 Kareena Rd, Miranda, NSW',
-  unsubscribeBaseUrl: 'https://impressiveelectrical.com.au/unsubscribe',
+  // Keep this on the same domain as `from`. A link to a third domain is the
+  // mismatch filters read as phishing — the display name above is free to be
+  // the trading name customers recognise, because names carry no weight in
+  // SPF, DKIM or DMARC.
+  unsubscribeBaseUrl: 'https://impressivebatteries.com.au/unsubscribe',
 };
 
 // ============================================
@@ -105,7 +109,7 @@ const text = [
   '--',
   CONFIG.fromName,
   CONFIG.businessAddress,
-  'https://impressiveelectrical.com.au',
+  'https://impressivebatteries.com.au',
   '',
   `Unsubscribe from feedback requests: ${unsubscribeUrl}`,
 ].join('\n');
