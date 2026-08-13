@@ -35,14 +35,21 @@ confirm     →  POST https://nps.impressivebatteries.com.au/r
 The customer's browser never touches `script.google.com`, and no link a crawler
 can follow will record anything.
 
-## 1. Generate the shared secret
+## 1. Generate the two secrets
 
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32   # NPS_SECRET  — signs tokens and votes
+openssl rand -base64 32   # NPS_API_KEY — lets n8n request a token
 ```
 
-The same value goes in three places: Vercel, Apps Script, and n8n. Store it in
-your password manager — it is not recoverable from any of them.
+`NPS_SECRET` goes in exactly two places: **Vercel** and **Apps Script**. It never
+enters n8n.
+
+`NPS_API_KEY` goes in **Vercel** and in an **n8n Header Auth credential**. It only
+buys the ability to mint invite tokens, so it can be rotated on its own without
+invalidating anything already sent.
+
+Store both in your password manager — neither is recoverable afterwards.
 
 ## 2. Vercel + Cloudflare DNS
 
@@ -81,8 +88,10 @@ Set the environment variables (Production, Preview and Development):
 
 | Variable | Value |
 | --- | --- |
-| `NPS_SECRET` | the secret from step 1 |
+| `NPS_SECRET` | the signing secret from step 1 |
+| `NPS_API_KEY` | the API key from step 1 |
 | `NPS_APPS_SCRIPT_URL` | the `/exec` URL from step 3 |
+| `NPS_PUBLIC_URL` | `https://nps.impressivebatteries.com.au` |
 | `NPS_BRAND_NAME` | `Impressive Electrical` |
 | `NPS_BRAND_URL` | `https://impressivebatteries.com.au` |
 | `NPS_SUPPORT_EMAIL` | `support@impressivebatteries.com.au` |
@@ -114,20 +123,59 @@ are widened automatically on the next write.
 
 ## 4. n8n
 
-Set `NODE_FUNCTION_ALLOW_BUILTIN=crypto` in the n8n environment (append to the
-list if one already exists) and restart n8n. Without it the Code node cannot
-sign tokens.
+No secret and no `crypto` module are needed in n8n. Code nodes cannot read
+credentials, so the workflow asks Vercel to mint the token over HTTP using an
+API key held in a proper credential.
 
-Add `NPS_SECRET` to the n8n environment as well.
+The workflow becomes:
 
-Then in the workflow:
+```
+[ Customer Data ] → [ Get NPS Token ] → [ Prepare NPS Email ] → [ Send Email ]
+                     HTTP Request         Code node
+```
 
-1. Open the Code node, set it to **Run Once for Each Item**
+**Create the credential** — **Credentials → New → Header Auth**
+
+| Field | Value |
+| --- | --- |
+| Credential name | `NPS Token API` |
+| Name | `x-api-key` |
+| Value | the `NPS_API_KEY` value from step 2 |
+
+n8n encrypts this at rest and redacts it from logs and workflow exports.
+
+**Add the HTTP Request node**, named exactly `Get NPS Token`:
+
+| Setting | Value |
+| --- | --- |
+| Method | `POST` |
+| URL | `https://nps.impressivebatteries.com.au/api/token` |
+| Authentication | Generic Credential Type → Header Auth → `NPS Token API` |
+| Send Body | on, JSON |
+
+```json
+{
+  "customer": "{{ $json.customer_id }}",
+  "email":    "{{ $json.customer_email }}",
+  "record":   "{{ $json.record_id }}"
+}
+```
+
+It returns `token`, `expiresAt` and a `ratingUrls` map for scores 0-10.
+
+**Then the Code node:**
+
+1. Set it to **Run Once for Each Item**
 2. Replace the contents with `n8n-code-node-example.js`
-3. Paste the contents of `email-template.html` into the `emailTemplate` constant
+3. Set `CUSTOMER_SOURCE_NODE` to the name of the node holding customer details
+4. Paste the contents of `email-template.html` into the `emailTemplate` constant
    where marked, and set `businessAddress` to your registered address
-4. In the Send Email node, map `text` as well as `html`, and add the two
+5. In the Send Email node, map `text` as well as `html`, and add the two
    `List-Unsubscribe` headers the Code node outputs
+
+**Rotating the API key:** change `NPS_API_KEY` in Vercel, redeploy, update the
+credential. Tokens already in customers' inboxes keep working, because they are
+signed with `NPS_SECRET`, which hasn't changed.
 
 ## 5. Email authentication
 

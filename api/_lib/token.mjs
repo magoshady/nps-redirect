@@ -40,6 +40,16 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
+/** Constant-time string comparison for shared secrets and API keys. */
+export function timingSafeCompare(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || b.length === 0) {
+    return false;
+  }
+  // Hash first so differing lengths don't short-circuit and leak length.
+  const digest = (value) => crypto.createHash('sha256').update(value).digest();
+  return crypto.timingSafeEqual(digest(a), digest(b));
+}
+
 function unpack(token, secret) {
   if (typeof token !== 'string' || token.length < 8) return null;
   const split = token.lastIndexOf('.');

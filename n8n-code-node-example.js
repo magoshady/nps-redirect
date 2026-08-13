@@ -3,25 +3,30 @@
  *
  * Mode: "Run Once for Each Item"
  *
- * Requires the crypto module. In your n8n environment set:
- *   NODE_FUNCTION_ALLOW_BUILTIN=crypto
- * (or add crypto to the existing comma-separated list)
+ * No secret and no crypto module needed here. n8n Code nodes cannot read
+ * credentials, so instead of putting the signing secret in the n8n
+ * environment, the preceding HTTP Request node asks Vercel to mint the token
+ * using an API key held in a Header Auth credential.
  *
- * NPS_SECRET must be the SAME value in three places:
- *   - this workflow            (below, via $env or a credential)
- *   - Vercel                   (NPS_SECRET environment variable)
- *   - Apps Script              (Script Property NPS_SECRET)
+ * Workflow shape:
+ *
+ *   [ Customer Data ]           customer_id, customer_email, customer_name, record_id
+ *          |
+ *   [ Get NPS Token ]           HTTP Request node — see the setup notes at the
+ *          |                    bottom of this file
+ *   [ Prepare NPS Email ]       this Code node
+ *          |
+ *   [ Send Email ]
  */
-
-const crypto = require('crypto');
 
 // ============================================
 // STEP 1: Config
 // ============================================
 
+// The node supplying customer details. Rename to match your workflow.
+const CUSTOMER_SOURCE_NODE = 'Customer Data';
+
 const CONFIG = {
-  surveyBaseUrl: 'https://nps.impressivebatteries.com.au/r',
-  secret: $env.NPS_SECRET, // never hard-code this
   from: 'support@impressivebatteries.com.au',
   fromName: 'Impressive Electrical',
   subject: 'How was your installation?',
@@ -29,70 +34,45 @@ const CONFIG = {
   unsubscribeBaseUrl: 'https://impressivebatteries.com.au/unsubscribe',
 };
 
-if (!CONFIG.secret) {
-  throw new Error('NPS_SECRET is not set — cannot sign survey links');
+// ============================================
+// STEP 2: Inputs
+// ============================================
+
+// From the HTTP Request node that called POST /api/token
+const { token: npsToken, ratingUrls } = $input.item.json;
+
+// From the node holding the customer record
+const source = $(CUSTOMER_SOURCE_NODE).item.json;
+const customerEmail = source.customer_email;
+const customerName = source.customer_name || 'there';
+const customerId = source.customer_id;
+const recordId = source.record_id || '';
+
+if (!npsToken || !ratingUrls) {
+  throw new Error(
+    'No token in the input. Check that the "Get NPS Token" HTTP Request node ran and returned JSON.',
+  );
 }
-
-// ============================================
-// STEP 2: Customer data from the previous node
-// ============================================
-
-const customerId = $input.item.json.customer_id;
-const customerEmail = $input.item.json.customer_email;
-const customerName = $input.item.json.customer_name || 'there';
-const recordId = $input.item.json.record_id || '';
-
-if (!customerId || !customerEmail) {
-  throw new Error(`Missing customer_id or customer_email for item: ${JSON.stringify($input.item.json)}`);
+if (!customerEmail) {
+  throw new Error(`No customer_email on the item from "${CUSTOMER_SOURCE_NODE}"`);
 }
-
-// ============================================
-// STEP 3: Build the signed invite token
-// ============================================
-//
-// The token carries the customer identity instead of putting their email
-// address in the URL, and it is signed so nobody can submit a rating for
-// someone else. It expires after 30 days (enforced server-side).
-
-function createInviteToken({ customer, email, record }, secret, now = Date.now()) {
-  const body = Buffer.from(
-    JSON.stringify({ c: String(customer), e: String(email), r: record ? String(record) : '', i: now }),
-  ).toString('base64url');
-
-  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
-  return `${body}.${signature}`;
-}
-
-const npsToken = createInviteToken(
-  { customer: customerId, email: customerEmail, record: recordId },
-  CONFIG.secret,
-);
-
-const ratingUrl = (score) =>
-  `${CONFIG.surveyBaseUrl}?score=${score}&t=${encodeURIComponent(npsToken)}`;
 
 const unsubscribeUrl = `${CONFIG.unsubscribeBaseUrl}?t=${encodeURIComponent(npsToken)}`;
 
 // ============================================
-// STEP 4: The email template
+// STEP 3: The email template
 // ============================================
 //
 // Paste the full contents of email-template.html between the backticks below.
-// Keep the {{PLACEHOLDER}} tokens intact — they are replaced in step 5.
+// Keep the {{PLACEHOLDER}} tokens intact — they are replaced in step 4.
 
 const emailTemplate = `
 <!-- >>> PASTE THE CONTENTS OF email-template.html HERE <<< -->
 `;
 
 // ============================================
-// STEP 5: Fill in the placeholders
+// STEP 4: Fill in the placeholders
 // ============================================
-
-let html = emailTemplate
-  .replace(/\{\{CUSTOMER_NAME\}\}/g, escapeHtml(customerName))
-  .replace(/\{\{NPS_TOKEN\}\}/g, encodeURIComponent(npsToken))
-  .replace(/\{\{BUSINESS_ADDRESS\}\}/g, escapeHtml(CONFIG.businessAddress))
-  .replace(/\{\{UNSUBSCRIBE_URL\}\}/g, unsubscribeUrl);
 
 function escapeHtml(value) {
   return String(value).replace(
@@ -100,6 +80,12 @@ function escapeHtml(value) {
     (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
   );
 }
+
+const html = emailTemplate
+  .replace(/\{\{CUSTOMER_NAME\}\}/g, escapeHtml(customerName))
+  .replace(/\{\{NPS_TOKEN\}\}/g, encodeURIComponent(npsToken))
+  .replace(/\{\{BUSINESS_ADDRESS\}\}/g, escapeHtml(CONFIG.businessAddress))
+  .replace(/\{\{UNSUBSCRIBE_URL\}\}/g, unsubscribeUrl);
 
 // A plaintext alternative is not optional. Sending HTML-only is one of the
 // cheapest ways to look like bulk phishing to a spam filter.
@@ -111,7 +97,10 @@ const text = [
   '',
   'Rate us from 0 (not likely) to 10 (extremely likely):',
   '',
-  ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => `  ${String(score).padStart(2)} - ${ratingUrl(score)}`),
+  ...Object.keys(ratingUrls)
+    .map(Number)
+    .sort((a, b) => a - b)
+    .map((score) => `  ${String(score).padStart(2)} - ${ratingUrls[score]}`),
   '',
   "You'll be asked to confirm your choice, so a mis-tap won't be counted.",
   '',
@@ -124,19 +113,8 @@ const text = [
 ].join('\n');
 
 // ============================================
-// STEP 6: Output
+// STEP 5: Output
 // ============================================
-//
-// In the Send Email node, map:
-//   To:      {{ $json.to }}
-//   Subject: {{ $json.subject }}
-//   HTML:    {{ $json.html }}
-//   Text:    {{ $json.text }}
-//
-// And add these headers — List-Unsubscribe materially improves inbox
-// placement and is expected by Gmail and Outlook for bulk mail:
-//   List-Unsubscribe:      {{ $json.headers['List-Unsubscribe'] }}
-//   List-Unsubscribe-Post: {{ $json.headers['List-Unsubscribe-Post'] }}
 
 return {
   json: {
@@ -150,8 +128,51 @@ return {
       'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:${CONFIG.from}?subject=unsubscribe>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     },
-    // Useful for debugging / logging, not for sending:
     customerId,
     recordId,
   },
 };
+
+/* ===========================================================================
+ * Setting up the "Get NPS Token" HTTP Request node
+ * ===========================================================================
+ *
+ * 1. Add an HTTP Request node between your customer data and this Code node.
+ *    Name it exactly "Get NPS Token".
+ *
+ * 2. Configure it:
+ *      Method:               POST
+ *      URL:                  https://nps.impressivebatteries.com.au/api/token
+ *      Authentication:       Generic Credential Type
+ *      Generic Auth Type:    Header Auth
+ *      Credential:           create one — see step 3
+ *      Send Body:            on
+ *      Body Content Type:    JSON
+ *      Specify Body:         Using JSON
+ *
+ *    JSON body:
+ *      {
+ *        "customer": "{{ $json.customer_id }}",
+ *        "email":    "{{ $json.customer_email }}",
+ *        "record":   "{{ $json.record_id }}"
+ *      }
+ *
+ * 3. Create the Header Auth credential (Credentials > New > Header Auth):
+ *      Name:  NPS Token API
+ *      Name:  x-api-key          <- the header name
+ *      Value: <the NPS_API_KEY value from Vercel>
+ *
+ *    n8n encrypts this at rest and redacts it from logs and exports. Rotating
+ *    it means changing NPS_API_KEY in Vercel and updating this credential —
+ *    the signing secret itself never changes and never enters n8n.
+ *
+ * 4. In the Send Email node, map:
+ *      To:      {{ $json.to }}
+ *      Subject: {{ $json.subject }}
+ *      HTML:    {{ $json.html }}
+ *      Text:    {{ $json.text }}
+ *
+ *    And add these headers, which materially improve inbox placement:
+ *      List-Unsubscribe:      {{ $json.headers['List-Unsubscribe'] }}
+ *      List-Unsubscribe-Post: {{ $json.headers['List-Unsubscribe-Post'] }}
+ */
