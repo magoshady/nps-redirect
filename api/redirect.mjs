@@ -280,7 +280,12 @@ async function recordVote(req, res) {
  * into an error page.
  */
 async function notifyN8n(vote, result) {
-  if (!N8N_WEBHOOK_URL) return;
+  if (!N8N_WEBHOOK_URL) {
+    // Loud on purpose. This moved out of Apps Script, so an unset variable
+    // means the notification silently stops happening at all.
+    console.warn('NPS_N8N_WEBHOOK_URL is not set — skipping the n8n notification');
+    return;
+  }
 
   const startedAt = Date.now();
   try {
