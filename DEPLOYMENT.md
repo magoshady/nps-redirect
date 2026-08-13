@@ -93,7 +93,7 @@ Set the environment variables (Production, Preview and Development):
 | `NPS_APPS_SCRIPT_URL` | the `/exec` URL from step 3 |
 | `NPS_PUBLIC_URL` | `https://nps.impressivebatteries.com.au` |
 | `NPS_BRAND_NAME` | `Impressive Electrical` |
-| `NPS_BRAND_URL` | `https://impressivebatteries.com.au` |
+| `NPS_BRAND_URL` | `https://impressiveelectrical.com.au` |
 | `NPS_SUPPORT_EMAIL` | `support@impressivebatteries.com.au` |
 
 ```bash

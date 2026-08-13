@@ -30,8 +30,8 @@ const CONFIG = {
   from: 'support@impressivebatteries.com.au',
   fromName: 'Impressive Electrical',
   subject: 'How was your installation?',
-  businessAddress: '123 Example Street, Sydney NSW 2000', // your registered address
-  unsubscribeBaseUrl: 'https://impressivebatteries.com.au/unsubscribe',
+  businessAddress: 'Unit 2, 8-18 Kareena Rd, Miranda, NSW',
+  unsubscribeBaseUrl: 'https://impressiveelectrical.com.au/unsubscribe',
 };
 
 // ============================================
@@ -105,7 +105,7 @@ const text = [
   '--',
   CONFIG.fromName,
   CONFIG.businessAddress,
-  'https://impressivebatteries.com.au',
+  'https://impressiveelectrical.com.au',
   '',
   `Unsubscribe from feedback requests: ${unsubscribeUrl}`,
 ].join('\n');

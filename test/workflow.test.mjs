@@ -148,7 +148,7 @@ test('a customer name containing markup is escaped', () => {
 test('List-Unsubscribe headers are emitted', () => {
   const { json } = runCodeNode();
 
-  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/impressivebatteries\.com\.au/);
+  assert.match(json.headers['List-Unsubscribe'], /^<https:\/\/impressiveelectrical\.com\.au/);
   assert.equal(json.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
 });
 
