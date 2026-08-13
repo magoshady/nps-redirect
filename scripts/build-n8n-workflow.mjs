@@ -111,21 +111,29 @@ const workflow = {
 
     node(
       'Send Email',
-      'n8n-nodes-base.emailSend',
+      'n8n-nodes-base.gmail',
       2.1,
       [840, 300],
       {
-        fromEmail: '={{ $json.from }}',
-        toEmail: '={{ $json.to }}',
+        resource: 'message',
+        operation: 'send',
+        sendTo: '={{ $json.to }}',
         subject: '={{ $json.subject }}',
-        emailFormat: 'both',
-        text: '={{ $json.text }}',
-        html: '={{ $json.html }}',
-        options: { appendAttribution: false },
+        emailType: 'html',
+        message: '={{ $json.html }}',
+        options: {
+          senderName: '={{ $json.fromName }}',
+          appendAttribution: false,
+        },
       },
       {
-        credentials: { smtp: { id: 'REPLACE_WITH_YOUR_SMTP_CREDENTIAL_ID', name: 'SMTP account' } },
-        notes: 'Select your existing SMTP credential after importing.',
+        credentials: {
+          gmailOAuth2: { id: 'REPLACE_WITH_YOUR_GMAIL_CREDENTIAL_ID', name: 'Gmail account' },
+        },
+        notes:
+          'Select your Gmail credential after importing. The account it is connected to '
+          + 'determines the From address — it must be support@impressivebatteries.com.au, or '
+          + 'have that set up as a verified "Send mail as" alias in Gmail settings.',
         notesInFlow: true,
       },
     ),

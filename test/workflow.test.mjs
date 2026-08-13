@@ -76,6 +76,14 @@ test('the token request is a POST authenticated by header credential', () => {
   assert.doesNotMatch(JSON.stringify(workflow), /x-api-key["']?\s*:\s*["'][^"']{10,}/);
 });
 
+test('sending goes through the Gmail node, which aligns SPF and DKIM', () => {
+  const send = nodeNamed('Send Email');
+
+  assert.equal(send.type, 'n8n-nodes-base.gmail');
+  assert.equal(send.parameters.emailType, 'html');
+  assert.ok(send.credentials.gmailOAuth2, 'must reference a Gmail OAuth credential');
+});
+
 test('the Code node runs once per item', () => {
   assert.equal(nodeNamed('Prepare NPS Email').parameters.mode, 'runOnceForEachItem');
 });

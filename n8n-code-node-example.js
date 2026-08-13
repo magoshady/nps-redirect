@@ -27,6 +27,11 @@
 const CUSTOMER_SOURCE_NODE = 'Customer Data';
 
 const CONFIG = {
+  // The Gmail node ignores this — it sends as whichever account the credential
+  // is connected to. Kept because List-Unsubscribe uses it, and so the intended
+  // sender is written down somewhere. That account must be
+  // support@impressivebatteries.com.au or have it as a verified "Send mail as"
+  // alias, otherwise the From domain stops matching the links.
   from: 'support@impressivebatteries.com.au',
   fromName: 'Impressive Electrical',
   subject: 'How was your installation?',
