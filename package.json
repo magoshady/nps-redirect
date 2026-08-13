@@ -5,6 +5,7 @@
   "main": "send-email-example.js",
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "build:workflow": "node scripts/build-n8n-workflow.mjs",
     "verify:scanner": "node test/scanner-probe.mjs",
     "preview": "open email-preview.html || xdg-open email-preview.html || start email-preview.html"
   },
