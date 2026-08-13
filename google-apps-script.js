@@ -18,7 +18,6 @@
 
 // Configuration
 const SHEET_NAME = 'NPS Responses';
-const N8N_WEBHOOK_URL = 'https://n8n.nuevaenergy.com.au/webhook/213f95f5-02f4-49c8-b86b-2d5b87d9f451';
 
 /** How stale a signed vote may be before we reject it as a replay. */
 const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
@@ -103,9 +102,13 @@ function doPost(e) {
     }
 
     try {
-      var result = recordResponse(score, body.customer, body.email, body.record || '');
-      notifyN8n(result, score, body.customer, body.email, body.record || '');
-      return jsonResponse(result);
+      // Nothing slow may happen between the write and the reply. The n8n
+      // notification used to run here, synchronously and inside the lock, so a
+      // webhook that responds only when its workflow finishes held this
+      // request open long enough for the caller to time out — the vote saved,
+      // but the customer was shown a failure. The survey site fires that
+      // webhook now, after it has replied to the customer.
+      return jsonResponse(recordResponse(score, body.customer, body.email, body.record || ''));
     } finally {
       lock.releaseLock();
     }
@@ -168,11 +171,17 @@ function recordResponse(score, customerId, email, recordId) {
         [timestamp, score, customerId, email, category, date, time, recordId, revisions, originalScore],
       ]);
 
-    return { status: 'revised', score: score, previousScore: previousScore, revisions: revisions };
+    return {
+      status: 'revised',
+      score: score,
+      category: category,
+      previousScore: previousScore,
+      revisions: revisions,
+    };
   }
 
   sheet.appendRow([timestamp, score, customerId, email, category, date, time, recordId, 0, '']);
-  return { status: 'recorded', score: score };
+  return { status: 'recorded', score: score, category: category };
 }
 
 function getOrCreateSheet() {
@@ -234,30 +243,6 @@ function findExistingRow(sheet, recordId, email) {
   }
 
   return null;
-}
-
-function notifyN8n(result, score, customerId, email, recordId) {
-  try {
-    var response = UrlFetchApp.fetch(N8N_WEBHOOK_URL, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({
-        'Contact ID': customerId,
-        score: score,
-        email: email,
-        recordId: recordId,
-        category: getCategory(score),
-        status: result.status,
-        previousScore: result.previousScore === undefined ? '' : result.previousScore,
-        timestamp: new Date().toISOString(),
-      }),
-      muteHttpExceptions: true,
-    });
-    Logger.log('n8n response: ' + response.getResponseCode());
-  } catch (webhookError) {
-    // A webhook failure must never cost us the recorded response.
-    Logger.log('n8n webhook error: ' + webhookError.toString());
-  }
 }
 
 function getCategory(score) {

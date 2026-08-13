@@ -30,6 +30,30 @@ const BRAND = {
 
 const SECRET = process.env.NPS_SECRET;
 const APPS_SCRIPT_URL = process.env.NPS_APPS_SCRIPT_URL;
+const N8N_WEBHOOK_URL = process.env.NPS_N8N_WEBHOOK_URL;
+
+/** Apps Script writes the row before it replies, so this only bounds the wait. */
+const APPS_SCRIPT_TIMEOUT_MS = 12_000;
+
+/** The customer is already waiting on this, so keep it short. */
+const WEBHOOK_TIMEOUT_MS = 2_500;
+
+export const config = { maxDuration: 20 };
+
+async function postJson(url, payload, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, max-age=0');
@@ -137,11 +161,11 @@ async function recordVote(req, res) {
 
   let result;
   try {
-    const response = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...vote, sig: signVote(vote, SECRET) }),
-    });
+    const response = await postJson(
+      APPS_SCRIPT_URL,
+      { ...vote, sig: signVote(vote, SECRET) },
+      APPS_SCRIPT_TIMEOUT_MS,
+    );
     const text = await response.text();
     try {
       result = JSON.parse(text);
@@ -154,6 +178,19 @@ async function recordVote(req, res) {
       throw new Error('rejected');
     }
   } catch (error) {
+    // A timeout is not the same as a rejection. Apps Script appends the row
+    // before it replies, so when the wait runs out the vote has almost
+    // certainly landed — and telling the customer it failed sends them back to
+    // re-submit a rating we already hold. Report the outage, thank the
+    // customer, and let the sheet be the record.
+    if (error.name === 'AbortError') {
+      console.error('Apps Script timed out; the vote was most likely recorded', {
+        customer: invite.customer,
+        score,
+      });
+      return send(res, 200, thankYouPage(score, { status: 'recorded' }));
+    }
+
     console.error('Failed to record vote', error);
     return send(
       res,
@@ -166,7 +203,41 @@ async function recordVote(req, res) {
     );
   }
 
+  await notifyN8n(vote, result);
+
   return send(res, 200, thankYouPage(score, result));
+}
+
+/**
+ * Tell n8n about the vote. This used to run inside Apps Script, synchronously
+ * and inside its lock, which meant a webhook configured to respond only when
+ * its workflow finished held the whole request open until the caller gave up.
+ * It runs here now, after the sheet write has been confirmed, on a short leash
+ * — the vote is already safe, so a slow or failing webhook must never turn
+ * into an error page.
+ */
+async function notifyN8n(vote, result) {
+  if (!N8N_WEBHOOK_URL) return;
+
+  try {
+    const response = await postJson(
+      N8N_WEBHOOK_URL,
+      {
+        'Contact ID': vote.customer,
+        score: vote.score,
+        email: vote.email,
+        recordId: vote.record,
+        category: result.category,
+        status: result.status,
+        previousScore: result.previousScore === undefined ? '' : result.previousScore,
+        timestamp: new Date(vote.ts).toISOString(),
+      },
+      WEBHOOK_TIMEOUT_MS,
+    );
+    if (!response.ok) console.warn('n8n webhook returned', response.status);
+  } catch (error) {
+    console.warn('n8n webhook failed; the vote is recorded regardless', error.name);
+  }
 }
 
 /* --------------------------------------------------------------- pages --- */
