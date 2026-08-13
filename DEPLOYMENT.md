@@ -44,17 +44,38 @@ openssl rand -base64 32
 The same value goes in three places: Vercel, Apps Script, and n8n. Store it in
 your password manager — it is not recoverable from any of them.
 
-## 2. Vercel
+## 2. Vercel + Cloudflare DNS
 
-Add the custom domain to the project:
+`impressivebatteries.com.au` is on Cloudflare (`maria.ns.cloudflare.com` /
+`morgan.ns.cloudflare.com`), so the DNS record goes there, not at your registrar.
+
+**In Vercel:** project → **Settings → Domains** → enter
+`nps.impressivebatteries.com.au` → **Add**. Vercel shows a CNAME target,
+usually `cname.vercel-dns.com`. Use whatever it displays.
+
+**In Cloudflare:** select the domain → **DNS → Records → Add record**
+
+| Field | Value |
+| --- | --- |
+| Type | `CNAME` |
+| Name | `nps` |
+| Target | the value Vercel gave you |
+| Proxy status | **DNS only (grey cloud)** |
+| TTL | Auto |
+
+> **The proxy must be off.** Cloudflare's orange-cloud proxy in front of a
+> Vercel domain causes certificate issuance to fail and can produce redirect
+> loops, because both platforms try to terminate TLS. Click the orange cloud
+> until it turns grey.
+
+Propagation is usually under a minute. Check with:
 
 ```bash
-vercel domains add nps.impressivebatteries.com.au
+dig +short nps.impressivebatteries.com.au
 ```
 
-Vercel will give you a CNAME to add at your DNS provider. Add it, wait for the
-certificate to issue, then confirm `https://nps.impressivebatteries.com.au`
-serves the placeholder page.
+Vercel's domain page will move to **Valid Configuration** once it sees the
+record and issues the certificate.
 
 Set the environment variables (Production, Preview and Development):
 
@@ -110,21 +131,35 @@ Then in the workflow:
 
 ## 5. Email authentication
 
-The domain move only pays off if the mail itself authenticates. Check all three
-records exist for `impressivebatteries.com.au`:
+The domain move only pays off if the mail itself authenticates. Current state
+of `impressivebatteries.com.au`:
 
-```bash
-dig +short TXT impressivebatteries.com.au | grep spf
-dig +short TXT _dmarc.impressivebatteries.com.au
+```
+SPF    v=spf1 include:_spf.google.com ~all
+DMARC  v=DMARC1; p=quarantine; adkim=r; aspf=r; rua=mailto:rodrigo@impressivebatteries.com.au
 ```
 
-- **SPF** must include whatever sends the mail
-- **DKIM** must be signing with a `d=` matching your From domain
-- **DMARC** should be at least `p=quarantine`; `p=none` gives filters no reason
-  to trust you
+DMARC is in good shape. **SPF authorises Google Workspace and nothing else**,
+and DMARC is at `p=quarantine` — so any survey mail that leaves through a
+different server fails authentication and gets quarantined or flagged.
 
-Test a send with [mail-tester.com](https://www.mail-tester.com) — aim for 9/10
-or better before you resume the campaign.
+So the question that decides this: **how does the n8n Send Email node connect?**
+
+- **Google Workspace SMTP** (`smtp.gmail.com`, or the Gmail node) — nothing to
+  do. SPF and DKIM already align.
+- **Anything else** (SendGrid, Mailgun, Postmark, Amazon SES, a VPS running
+  Postfix, n8n's own SMTP) — mail is failing DMARC today. You must:
+  1. add that provider to SPF, e.g.
+     `v=spf1 include:_spf.google.com include:sendgrid.net ~all`
+  2. set up DKIM with that provider and publish the CNAME/TXT it gives you in
+     Cloudflare, so the `d=` domain aligns with `impressivebatteries.com.au`
+
+Check the `rua` reports at `rodrigo@impressivebatteries.com.au` — DMARC
+aggregate reports name every IP sending as your domain and will tell you
+directly whether the survey mail is passing.
+
+Then test a send with [mail-tester.com](https://www.mail-tester.com) — aim for
+9/10 or better before you resume the campaign.
 
 ## 6. Verify
 
