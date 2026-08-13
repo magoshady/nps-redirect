@@ -4,7 +4,8 @@
   "description": "Free NPS survey system using HTML emails and Google Sheets",
   "main": "send-email-example.js",
   "scripts": {
-    "test": "node send-email-example.js",
+    "test": "node --test test/*.test.mjs",
+    "verify:scanner": "node test/scanner-probe.mjs",
     "preview": "open email-preview.html || xdg-open email-preview.html || start email-preview.html"
   },
   "keywords": [
@@ -21,7 +22,7 @@
   },
   "devDependencies": {},
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   }
 }
 

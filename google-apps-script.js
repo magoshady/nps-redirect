@@ -1,272 +1,270 @@
 /**
  * NPS Survey Response Tracker
- * 
- * This Google Apps Script receives NPS ratings from email links and stores them in a Google Sheet.
- * 
- * Setup Instructions:
- * 1. Create a new Google Sheet
- * 2. Go to Extensions > Apps Script
- * 3. Paste this code
- * 4. Deploy as Web App (Deploy > New deployment > Web app)
- * 5. Set "Execute as" to "Me"
- * 6. Set "Who has access" to "Anyone"
- * 7. Copy the deployment URL and use it in your email template as {{SCRIPT_URL}}
+ *
+ * Writes are POST-only and signed. The Vercel function at
+ * https://nps.impressivebatteries.com.au is the only caller; it holds the same
+ * shared secret and signs every vote.
+ *
+ * Setup:
+ * 1. Extensions > Apps Script in your Google Sheet
+ * 2. Paste this code
+ * 3. Project Settings > Script Properties > add NPS_SECRET
+ *    (the same value as the NPS_SECRET environment variable in Vercel)
+ * 4. Deploy > New deployment > Web app
+ *      Execute as:     Me
+ *      Who has access: Anyone
+ * 5. Put the /exec URL in Vercel as NPS_APPS_SCRIPT_URL
  */
 
 // Configuration
 const SHEET_NAME = 'NPS Responses';
-const THANK_YOU_URL = 'https://your-domain.com/thank-you.html'; // Update this with your thank you page URL
+const N8N_WEBHOOK_URL = 'https://n8n.nuevaenergy.com.au/webhook/213f95f5-02f4-49c8-b86b-2d5b87d9f451';
+
+/** How stale a signed vote may be before we reject it as a replay. */
+const MAX_SIGNATURE_AGE_MS = 5 * 60 * 1000;
+
+const HEADERS = [
+  'Timestamp',
+  'Score',
+  'Customer ID',
+  'Email',
+  'Category',
+  'Date',
+  'Time',
+  'Record ID',
+  'Revisions',
+  'Original Score',
+];
 
 /**
- * Handle GET requests (when customer clicks a rating link)
+ * GET is read-only on purpose.
+ *
+ * Mail security scanners follow links from emails and from the pages those
+ * links return. When recording lived behind a GET, scanners submitted votes on
+ * customers' behalf — always score 0, because that was the first link in the
+ * email. Nothing here may write to the sheet.
  */
 function doGet(e) {
+  return HtmlService.createHtmlOutput(
+    '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+      '<title>NPS Survey</title></head>' +
+      '<body style="font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,sans-serif;' +
+      'display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f6f7f9">' +
+      '<div style="background:#fff;border-radius:14px;padding:40px;max-width:460px;text-align:center;' +
+      'box-shadow:0 6px 28px rgba(20,24,31,.08)">' +
+      '<h1 style="font-size:22px;color:#1e2126;margin:0 0 12px">Please use the link in your email</h1>' +
+      '<p style="color:#565d68;line-height:1.55;margin:0">Ratings can only be submitted from the buttons ' +
+      'in the survey email we sent you.</p>' +
+      '</div></body></html>',
+  );
+}
+
+/**
+ * POST is the only way a response gets recorded, and only with a valid
+ * signature from the Vercel function.
+ */
+function doPost(e) {
   try {
-    // Get parameters from URL
-    const scoreParam = e.parameter.score;
-    const customerId = e.parameter.customer;
-    const email = e.parameter.email;
-    const recordId = e.parameter.record || ''; // HubSpot Record/Deal ID (optional)
-    
-    // Validate and convert score to integer
-    const score = parseInt(scoreParam);
+    var secret = PropertiesService.getScriptProperties().getProperty('NPS_SECRET');
+    if (!secret) {
+      Logger.log('NPS_SECRET script property is not set');
+      return jsonResponse({ status: 'error', reason: 'not_configured' });
+    }
+
+    if (!e || !e.postData || !e.postData.contents) {
+      return jsonResponse({ status: 'error', reason: 'empty_body' });
+    }
+
+    var body = JSON.parse(e.postData.contents);
+    var score = parseInt(body.score, 10);
+
     if (isNaN(score) || score < 0 || score > 10) {
-      return ContentService.createTextOutput('Invalid score').setMimeType(ContentService.MimeType.TEXT);
+      return jsonResponse({ status: 'error', reason: 'invalid_score' });
     }
-    
-    // Acquire lock to prevent race conditions (wait up to 30 seconds)
-    const lock = LockService.getScriptLock();
-    try {
-      lock.waitLock(30000); // Wait up to 30 seconds for lock
-    } catch (e) {
-      return ContentService.createTextOutput('Please try again in a moment').setMimeType(ContentService.MimeType.TEXT);
+    if (!body.customer || !body.email || !body.ts) {
+      return jsonResponse({ status: 'error', reason: 'incomplete' });
     }
-    
+    if (Math.abs(Date.now() - Number(body.ts)) > MAX_SIGNATURE_AGE_MS) {
+      return jsonResponse({ status: 'error', reason: 'stale' });
+    }
+
+    var canonical = [score, body.customer, body.email, body.record || '', body.ts].join('|');
+    if (!signaturesMatch(body.sig, canonical, secret)) {
+      Logger.log('Rejected unsigned or mis-signed vote for ' + body.customer);
+      return jsonResponse({ status: 'error', reason: 'bad_signature' });
+    }
+
+    var lock = LockService.getScriptLock();
     try {
-      // Check for duplicate votes (by Record ID or Email) - now with lock protection
-      const duplicate = checkDuplicate(recordId, email);
-      
-      if (duplicate) {
-      // Show "already voted" message
-      return HtmlService.createHtmlOutput(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8">
-            <title>Already Submitted</title>
-            <style>
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-                margin: 0;
-                background: linear-gradient(135deg, #ffe5e8 0%, #fff9fa 100%);
-              }
-              .container {
-                background: white;
-                padding: 60px 40px;
-                border-radius: 12px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-                text-align: center;
-                max-width: 500px;
-              }
-              h1 {
-                color: #333;
-                font-size: 32px;
-                margin: 0 0 20px 0;
-              }
-              p {
-                color: #666;
-                font-size: 18px;
-                line-height: 1.6;
-                margin: 0;
-              }
-              .emoji {
-                font-size: 64px;
-                margin-bottom: 20px;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="emoji">✅</div>
-              <h1>You've Already Responded</h1>
-              <p>Thank you! We've already received your feedback.</p>
-              <p style="margin-top: 20px; font-size: 16px; color: #999;">Your previous response: ${duplicate.score}/10</p>
-            </div>
-          </body>
-        </html>
-      `);
-      }
-      
-      // Record the response (first time)
-      recordResponse(score, customerId, email, recordId);
-      
+      lock.waitLock(30000);
+    } catch (lockError) {
+      return jsonResponse({ status: 'error', reason: 'busy' });
+    }
+
+    try {
+      var result = recordResponse(score, body.customer, body.email, body.record || '');
+      notifyN8n(result, score, body.customer, body.email, body.record || '');
+      return jsonResponse(result);
     } finally {
-      // Always release the lock
       lock.releaseLock();
     }
-    
-    // Redirect to thank you page with the score
-    const redirectUrl = `${THANK_YOU_URL}?score=${score}`;
-    
-    return HtmlService.createHtmlOutput(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>Thank You!</title>
-          <style>
-            body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              min-height: 100vh;
-              margin: 0;
-              background: linear-gradient(135deg, #ffe5e8 0%, #fff9fa 100%);
-            }
-            .container {
-              background: white;
-              padding: 60px 40px;
-              border-radius: 12px;
-              box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-              text-align: center;
-              max-width: 500px;
-            }
-            h1 {
-              color: #333;
-              font-size: 32px;
-              margin: 0 0 20px 0;
-            }
-            p {
-              color: #666;
-              font-size: 18px;
-              line-height: 1.6;
-              margin: 0;
-            }
-            .emoji {
-              font-size: 64px;
-              margin-bottom: 20px;
-            }
-            .score {
-              display: inline-block;
-              background: #e0001a;
-              color: white;
-              padding: 8px 16px;
-              border-radius: 20px;
-              font-weight: 600;
-              margin: 20px 0;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="emoji">${getEmojiForScore(score)}</div>
-            <h1>Thank you for your feedback!</h1>
-            <div class="score">You rated us: ${score}/10</div>
-            <p>We really appreciate you taking the time to share your experience with us.</p>
-            ${score < 7 ? '<p style="margin-top: 20px;">We\'re sorry we didn\'t meet your expectations. We\'ll work hard to improve!</p>' : ''}
-            ${score >= 9 ? '<p style="margin-top: 20px;">We\'re thrilled you had a great experience! 🎉</p>' : ''}
-          </div>
-        </body>
-      </html>
-    `);
-    
   } catch (error) {
-    Logger.log('Error: ' + error.toString());
-    return ContentService.createTextOutput('Error processing request').setMimeType(ContentService.MimeType.TEXT);
+    Logger.log('doPost error: ' + error.toString());
+    return jsonResponse({ status: 'error', reason: 'exception' });
   }
 }
 
 /**
- * Check for duplicate votes
- * Returns the existing response if found, null otherwise
+ * Constant-time-ish comparison of the request signature against our own.
+ * Utilities.base64EncodeWebSafe pads with '='; Node's base64url does not.
  */
-function checkDuplicate(recordId, email) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAME);
-  
-  // If sheet doesn't exist yet, no duplicates
-  if (!sheet) {
-    return null;
+function signaturesMatch(provided, canonical, secret) {
+  if (!provided) return false;
+  var raw = Utilities.computeHmacSha256Signature(canonical, secret);
+  var expected = Utilities.base64EncodeWebSafe(raw).replace(/=+$/, '');
+  if (provided.length !== expected.length) return false;
+
+  var diff = 0;
+  for (var i = 0; i < expected.length; i++) {
+    diff |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
   }
-  
-  const data = sheet.getDataRange().getValues();
-  
-  // Skip header row (row 0)
-  for (let i = 1; i < data.length; i++) {
-    const rowRecordId = data[i][7]; // Record ID column (column H, index 7)
-    const rowEmail = data[i][3]; // Email column (column D, index 3)
-    const rowScore = data[i][1]; // Score column (column B, index 1)
-    
-    // Check if this record ID has already voted (prioritize Record ID check)
-    if (recordId && rowRecordId && rowRecordId.toString() === recordId.toString()) {
-      return { score: rowScore, method: 'record_id' };
-    }
-    
-    // Fallback: Check by email if Record ID not available
-    if (!recordId && email && rowEmail && rowEmail.toLowerCase() === email.toLowerCase()) {
-      return { score: rowScore, method: 'email' };
-    }
-  }
-  
-  return null; // No duplicate found
+  return diff === 0;
+}
+
+function jsonResponse(payload) {
+  return ContentService.createTextOutput(JSON.stringify(payload)).setMimeType(
+    ContentService.MimeType.JSON,
+  );
 }
 
 /**
- * Record the NPS response in the spreadsheet
+ * Record a response, or revise the customer's existing one.
+ *
+ * We deliberately do not lock a customer out after their first vote. The old
+ * behaviour meant a stray automated vote could never be corrected — the
+ * customer clicked 9, got told they'd already answered 0, and gave up. Since
+ * writes now require a signed POST, a second vote is a real person changing
+ * their mind, so it replaces the first and we keep a count.
  */
 function recordResponse(score, customerId, email, recordId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName(SHEET_NAME);
-  
-  // Create sheet if it doesn't exist
+  var sheet = getOrCreateSheet();
+  var category = getCategory(score);
+  var now = new Date();
+  var timestamp = now.toISOString();
+  var date = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var time = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss');
+
+  var existing = findExistingRow(sheet, recordId, email);
+
+  if (existing) {
+    var previousScore = existing.score;
+    var revisions = Number(existing.revisions || 0) + 1;
+    var originalScore = existing.originalScore === '' ? previousScore : existing.originalScore;
+
+    sheet
+      .getRange(existing.row, 1, 1, HEADERS.length)
+      .setValues([
+        [timestamp, score, customerId, email, category, date, time, recordId, revisions, originalScore],
+      ]);
+
+    return { status: 'revised', score: score, previousScore: previousScore, revisions: revisions };
+  }
+
+  sheet.appendRow([timestamp, score, customerId, email, category, date, time, recordId, 0, '']);
+  return { status: 'recorded', score: score };
+}
+
+function getOrCreateSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAME);
+
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAME);
-    // Add headers
-    sheet.appendRow(['Timestamp', 'Score', 'Customer ID', 'Email', 'Category', 'Date', 'Time', 'Record ID']);
-    sheet.getRange(1, 1, 1, 8).setFontWeight('bold').setBackground('#4285f4').setFontColor('#ffffff');
+    sheet.appendRow(HEADERS);
+    sheet
+      .getRange(1, 1, 1, HEADERS.length)
+      .setFontWeight('bold')
+      .setBackground('#4285f4')
+      .setFontColor('#ffffff');
     sheet.setFrozenRows(1);
+    return sheet;
   }
-  
-  // Determine NPS category
-  const category = getCategory(score);
-  
-  // Get timestamp
-  const now = new Date();
-  const timestamp = now.toISOString();
-  const date = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  const time = Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss');
-  
-  // Add the response
-  sheet.appendRow([timestamp, score, customerId, email, category, date, time, recordId]);
-  
-  // Auto-resize columns
-  sheet.autoResizeColumns(1, 8);
+
+  // Widen older sheets that predate the revision columns.
+  if (sheet.getLastColumn() < HEADERS.length) {
+    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
+    sheet
+      .getRange(1, 1, 1, HEADERS.length)
+      .setFontWeight('bold')
+      .setBackground('#4285f4')
+      .setFontColor('#ffffff');
+  }
+
+  return sheet;
 }
 
 /**
- * Get NPS category based on score
+ * Find this customer's existing response. Record ID wins when present,
+ * because one person can hold several deals; email is the fallback.
  */
+function findExistingRow(sheet, recordId, email) {
+  var data = sheet.getDataRange().getValues();
+
+  for (var i = 1; i < data.length; i++) {
+    var rowRecordId = data[i][7];
+    var rowEmail = data[i][3];
+
+    var matchesRecord =
+      recordId && rowRecordId && rowRecordId.toString() === recordId.toString();
+    var matchesEmail =
+      !recordId &&
+      email &&
+      rowEmail &&
+      rowEmail.toString().toLowerCase() === email.toLowerCase();
+
+    if (matchesRecord || matchesEmail) {
+      return {
+        row: i + 1,
+        score: data[i][1],
+        revisions: data[i][8],
+        originalScore: data[i][9],
+      };
+    }
+  }
+
+  return null;
+}
+
+function notifyN8n(result, score, customerId, email, recordId) {
+  try {
+    var response = UrlFetchApp.fetch(N8N_WEBHOOK_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({
+        'Contact ID': customerId,
+        score: score,
+        email: email,
+        recordId: recordId,
+        category: getCategory(score),
+        status: result.status,
+        previousScore: result.previousScore === undefined ? '' : result.previousScore,
+        timestamp: new Date().toISOString(),
+      }),
+      muteHttpExceptions: true,
+    });
+    Logger.log('n8n response: ' + response.getResponseCode());
+  } catch (webhookError) {
+    // A webhook failure must never cost us the recorded response.
+    Logger.log('n8n webhook error: ' + webhookError.toString());
+  }
+}
+
 function getCategory(score) {
-  score = parseInt(score);
+  score = parseInt(score, 10);
   if (score >= 9) return 'Promoter';
   if (score >= 7) return 'Passive';
   return 'Detractor';
-}
-
-/**
- * Get emoji based on score
- */
-function getEmojiForScore(score) {
-  score = parseInt(score);
-  if (score >= 9) return '🌟';
-  if (score >= 7) return '😊';
-  if (score >= 5) return '😐';
-  return '😞';
 }
 
 /**
@@ -274,59 +272,67 @@ function getEmojiForScore(score) {
  * Run this function manually to see your current NPS
  */
 function calculateNPS() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAME);
-  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_NAME);
+
   if (!sheet) {
     Logger.log('No responses yet!');
     return;
   }
-  
-  const data = sheet.getDataRange().getValues();
-  
-  // Skip header row
-  let promoters = 0;
-  let passives = 0;
-  let detractors = 0;
-  
-  for (let i = 1; i < data.length; i++) {
-    const category = data[i][4]; // Category column
+
+  var data = sheet.getDataRange().getValues();
+  var promoters = 0;
+  var passives = 0;
+  var detractors = 0;
+
+  for (var i = 1; i < data.length; i++) {
+    var category = data[i][4];
     if (category === 'Promoter') promoters++;
     else if (category === 'Passive') passives++;
     else if (category === 'Detractor') detractors++;
   }
-  
-  const total = promoters + passives + detractors;
-  
+
+  var total = promoters + passives + detractors;
+
   if (total === 0) {
     Logger.log('No responses yet!');
     return;
   }
-  
-  const npsScore = ((promoters - detractors) / total) * 100;
-  
+
+  var npsScore = ((promoters - detractors) / total) * 100;
+
   Logger.log('=== NPS REPORT ===');
   Logger.log('Total Responses: ' + total);
-  Logger.log('Promoters (9-10): ' + promoters + ' (' + ((promoters/total)*100).toFixed(1) + '%)');
-  Logger.log('Passives (7-8): ' + passives + ' (' + ((passives/total)*100).toFixed(1) + '%)');
-  Logger.log('Detractors (0-6): ' + detractors + ' (' + ((detractors/total)*100).toFixed(1) + '%)');
+  Logger.log('Promoters (9-10): ' + promoters);
+  Logger.log('Passives (7-8): ' + passives);
+  Logger.log('Detractors (0-6): ' + detractors);
   Logger.log('NPS Score: ' + npsScore.toFixed(1));
-  Logger.log('==================');
-  
-  // Also show in a dialog if running from UI
+
   try {
-    const ui = SpreadsheetApp.getUi();
-    ui.alert('NPS Report',
-      `Total Responses: ${total}\n\n` +
-      `Promoters (9-10): ${promoters} (${((promoters/total)*100).toFixed(1)}%)\n` +
-      `Passives (7-8): ${passives} (${((passives/total)*100).toFixed(1)}%)\n` +
-      `Detractors (0-6): ${detractors} (${((detractors/total)*100).toFixed(1)}%)\n\n` +
-      `📊 NPS Score: ${npsScore.toFixed(1)}`,
-      ui.ButtonSet.OK);
+    SpreadsheetApp.getUi().alert(
+      'NPS Report',
+      'Total Responses: ' +
+        total +
+        '\n\nPromoters (9-10): ' +
+        promoters +
+        ' (' +
+        ((promoters / total) * 100).toFixed(1) +
+        '%)\nPassives (7-8): ' +
+        passives +
+        ' (' +
+        ((passives / total) * 100).toFixed(1) +
+        '%)\nDetractors (0-6): ' +
+        detractors +
+        ' (' +
+        ((detractors / total) * 100).toFixed(1) +
+        '%)\n\nNPS Score: ' +
+        npsScore.toFixed(1),
+      SpreadsheetApp.getUi().ButtonSet.OK,
+    );
   } catch (e) {
-    // Running from script editor
+    // Running from the script editor, no UI available.
   }
-  
+
   return npsScore;
 }
 
@@ -334,70 +340,68 @@ function calculateNPS() {
  * Create a dashboard sheet with NPS metrics
  */
 function createDashboard() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let dashboardSheet = ss.getSheetByName('NPS Dashboard');
-  
-  // Create dashboard if it doesn't exist
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var dashboardSheet = ss.getSheetByName('NPS Dashboard');
+
   if (!dashboardSheet) {
     dashboardSheet = ss.insertSheet('NPS Dashboard', 0);
   } else {
     dashboardSheet.clear();
   }
-  
-  const responseSheet = ss.getSheetByName(SHEET_NAME);
+
+  var responseSheet = ss.getSheetByName(SHEET_NAME);
   if (!responseSheet) {
-    dashboardSheet.getRange('A1').setValue('No responses yet! The dashboard will appear after you receive your first response.');
+    dashboardSheet
+      .getRange('A1')
+      .setValue('No responses yet! The dashboard will appear after your first response.');
     return;
   }
-  
-  // Title
+
   dashboardSheet.getRange('A1').setValue('NPS Dashboard').setFontSize(18).setFontWeight('bold');
-  
-  // Summary metrics
   dashboardSheet.getRange('A3').setValue('Summary Metrics').setFontWeight('bold').setFontSize(14);
-  
-  // Total responses
+
   dashboardSheet.getRange('A5').setValue('Total Responses:');
-  dashboardSheet.getRange('B5').setFormula(`=COUNTA('${SHEET_NAME}'!A2:A)-1`);
-  
-  // Promoters
+  dashboardSheet.getRange('B5').setFormula("=COUNTA('" + SHEET_NAME + "'!A2:A)");
+
   dashboardSheet.getRange('A6').setValue('Promoters (9-10):');
-  dashboardSheet.getRange('B6').setFormula(`=COUNTIF('${SHEET_NAME}'!E2:E,"Promoter")`);
-  dashboardSheet.getRange('C6').setFormula(`=IF(B5>0,B6/B5,0)`).setNumberFormat('0.0%');
-  
-  // Passives
+  dashboardSheet.getRange('B6').setFormula("=COUNTIF('" + SHEET_NAME + "'!E2:E,\"Promoter\")");
+  dashboardSheet.getRange('C6').setFormula('=IF(B5>0,B6/B5,0)').setNumberFormat('0.0%');
+
   dashboardSheet.getRange('A7').setValue('Passives (7-8):');
-  dashboardSheet.getRange('B7').setFormula(`=COUNTIF('${SHEET_NAME}'!E2:E,"Passive")`);
-  dashboardSheet.getRange('C7').setFormula(`=IF(B5>0,B7/B5,0)`).setNumberFormat('0.0%');
-  
-  // Detractors
+  dashboardSheet.getRange('B7').setFormula("=COUNTIF('" + SHEET_NAME + "'!E2:E,\"Passive\")");
+  dashboardSheet.getRange('C7').setFormula('=IF(B5>0,B7/B5,0)').setNumberFormat('0.0%');
+
   dashboardSheet.getRange('A8').setValue('Detractors (0-6):');
-  dashboardSheet.getRange('B8').setFormula(`=COUNTIF('${SHEET_NAME}'!E2:E,"Detractor")`);
-  dashboardSheet.getRange('C8').setFormula(`=IF(B5>0,B8/B5,0)`).setNumberFormat('0.0%');
-  
-  // NPS Score
+  dashboardSheet.getRange('B8').setFormula("=COUNTIF('" + SHEET_NAME + "'!E2:E,\"Detractor\")");
+  dashboardSheet.getRange('C8').setFormula('=IF(B5>0,B8/B5,0)').setNumberFormat('0.0%');
+
   dashboardSheet.getRange('A10').setValue('NPS Score:').setFontWeight('bold').setFontSize(14);
-  dashboardSheet.getRange('B10').setFormula('=IF(B5>0,(B6-B8)/B5*100,0)').setNumberFormat('0.0').setFontWeight('bold').setFontSize(14);
-  
-  // Format
+  dashboardSheet
+    .getRange('B10')
+    .setFormula('=IF(B5>0,(B6-B8)/B5*100,0)')
+    .setNumberFormat('0.0')
+    .setFontWeight('bold')
+    .setFontSize(14);
+
+  dashboardSheet.getRange('A12').setValue('Revised Responses:');
+  dashboardSheet.getRange('B12').setFormula("=COUNTIF('" + SHEET_NAME + "'!I2:I,\">0\")");
+
   dashboardSheet.setColumnWidth(1, 200);
   dashboardSheet.setColumnWidth(2, 100);
   dashboardSheet.setColumnWidth(3, 100);
-  
-  // Add chart
-  const chartRange = dashboardSheet.getRange('A6:B8');
-  const chart = dashboardSheet.newChart()
+
+  var chart = dashboardSheet
+    .newChart()
     .setChartType(Charts.ChartType.PIE)
-    .addRange(chartRange)
-    .setPosition(12, 1, 0, 0)
+    .addRange(dashboardSheet.getRange('A6:B8'))
+    .setPosition(14, 1, 0, 0)
     .setOption('title', 'Response Distribution')
     .setOption('width', 400)
     .setOption('height', 300)
     .setOption('colors', ['#34A853', '#FBBC04', '#EA4335'])
     .build();
-  
+
   dashboardSheet.insertChart(chart);
-  
   SpreadsheetApp.getUi().alert('Dashboard created successfully!');
 }
 
@@ -405,8 +409,8 @@ function createDashboard() {
  * Add custom menu to Google Sheets
  */
 function onOpen() {
-  const ui = SpreadsheetApp.getUi();
-  ui.createMenu('NPS Tools')
+  SpreadsheetApp.getUi()
+    .createMenu('NPS Tools')
     .addItem('Calculate NPS', 'calculateNPS')
     .addItem('Create Dashboard', 'createDashboard')
     .addSeparator()
@@ -414,25 +418,16 @@ function onOpen() {
     .addToUi();
 }
 
-/**
- * Show setup instructions
- */
 function showSetupInstructions() {
-  const ui = SpreadsheetApp.getUi();
-  ui.alert('Setup Instructions',
-    '1. Deploy this script as a Web App:\n' +
-    '   • Click "Deploy" > "New deployment"\n' +
-    '   • Select "Web app" type\n' +
-    '   • Set "Execute as" to "Me"\n' +
-    '   • Set "Who has access" to "Anyone"\n' +
-    '   • Click "Deploy" and copy the URL\n\n' +
-    '2. Update your email template:\n' +
-    '   • Replace {{SCRIPT_URL}} with your deployment URL\n' +
-    '   • Replace {{CUSTOMER_ID}} with actual customer IDs\n' +
-    '   • Replace {{CUSTOMER_EMAIL}} with actual emails\n\n' +
-    '3. Send emails to your customers!\n\n' +
-    '4. Use "NPS Tools" menu to view your results',
-    ui.ButtonSet.OK);
+  SpreadsheetApp.getUi().alert(
+    'Setup Instructions',
+    '1. Project Settings > Script Properties:\n' +
+      '   Add NPS_SECRET (same value as in Vercel)\n\n' +
+      '2. Deploy > New deployment > Web app\n' +
+      '   Execute as: Me\n' +
+      '   Who has access: Anyone\n\n' +
+      '3. Copy the /exec URL into Vercel as NPS_APPS_SCRIPT_URL\n\n' +
+      'Responses are only accepted as signed POSTs from the survey site.',
+    SpreadsheetApp.getUi().ButtonSet.OK,
+  );
 }
-
-
