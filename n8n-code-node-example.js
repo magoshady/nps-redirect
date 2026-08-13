@@ -102,8 +102,6 @@ const text = [
     .sort((a, b) => a - b)
     .map((score) => `  ${String(score).padStart(2)} - ${ratingUrls[score]}`),
   '',
-  "You'll be asked to confirm your choice, so a mis-tap won't be counted.",
-  '',
   '--',
   CONFIG.fromName,
   CONFIG.businessAddress,
