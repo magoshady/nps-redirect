@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **Parts of this document describe the superseded flow.** Rating links that
+> point directly at `script.google.com` with the customer's email in the query
+> string are no longer supported — that design let mail security scanners record
+> votes (always `0`) and got the emails flagged as phishing.
+>
+> See [DEPLOYMENT.md](DEPLOYMENT.md) for the current setup.
+
 # Free NPS Survey System 📊
 
 A complete, free NPS (Net Promoter Score) survey solution using HTML emails, Google Sheets, and Google Apps Script. **No paid tools required!**
@@ -315,5 +323,3 @@ Your NPS system is ready to go. Start collecting feedback and improving your cus
 **Remember:** The goal isn't just to collect scores—it's to act on the feedback and improve your product/service.
 
 Good luck! 🚀
-
-

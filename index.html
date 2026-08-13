@@ -3,84 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Submitting your feedback...</title>
+    <meta name="robots" content="noindex, nofollow">
+    <title>Customer Feedback · Impressive Electrical</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #ffe5e8 0%, #fff9fa 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            display: flex; align-items: center; justify-content: center;
+            min-height: 100vh; margin: 0; padding: 24px;
+            background: #f6f7f9; color: #1e2126;
         }
-        .container {
-            background: white;
-            padding: 60px 40px;
-            border-radius: 12px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            text-align: center;
-            max-width: 500px;
+        .card {
+            background: #fff; border: 1px solid #e6e8ec; border-radius: 14px;
+            box-shadow: 0 6px 28px rgba(20, 24, 31, .08);
+            padding: 40px 36px; max-width: 480px; text-align: center;
         }
-        .loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #e0001a;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 20px;
+        .brand {
+            font-size: 13px; font-weight: 600; letter-spacing: .08em;
+            text-transform: uppercase; color: #e0001a; margin-bottom: 22px;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        h1 {
-            color: #333;
-            font-size: 24px;
-            margin: 0;
-        }
-        p {
-            color: #666;
-            font-size: 16px;
-            margin: 10px 0 0 0;
-        }
+        h1 { font-size: 22px; margin: 0 0 12px; }
+        p { font-size: 16px; line-height: 1.55; color: #565d68; margin: 12px 0 0; }
+        a { color: #e0001a; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="loader"></div>
-        <h1>Submitting your feedback...</h1>
-        <p>Please wait a moment.</p>
-    </div>
-    
-    <script>
-        // Get URL parameters
-        const params = new URLSearchParams(window.location.search);
-        const score = params.get('score');
-        const customer = params.get('customer');
-        const email = params.get('email');
-        const record = params.get('record');
-        
-        // Validate parameters
-        if (!score || !customer || !email) {
-            document.querySelector('.container').innerHTML = 
-                '<h1>Invalid Link</h1><p>Please use the link from your email.</p>';
-        } else {
-            // Redirect to Google Apps Script
-            const scriptUrl = 'https://script.google.com/macros/s/AKfycby0Ou-QXI1unShZiRoQUVAqbRn6PZFsgwkvV-df0kLIrm8nizaeZc6VpAJf-SJvt6wahQ/exec';
-            let redirectUrl = scriptUrl + '?score=' + encodeURIComponent(score) + 
-                                '&customer=' + encodeURIComponent(customer) + 
-                                '&email=' + encodeURIComponent(email);
-            
-            // Add record ID if provided
-            if (record) {
-                redirectUrl += '&record=' + encodeURIComponent(record);
-            }
-            
-            // Redirect immediately
-            window.location.replace(redirectUrl);
-        }
-    </script>
+    <!--
+        This page is deliberately static.
+
+        It previously read query parameters and redirected to script.google.com
+        via JavaScript. An open redirect on the root of the sending domain is a
+        strong phishing signal and would undermine the point of moving the
+        survey onto our own domain. Ratings are handled at /r only.
+    -->
+    <main class="card">
+        <div class="brand">Impressive Electrical</div>
+        <h1>Customer feedback</h1>
+        <p>This site handles feedback surveys for Impressive Electrical customers.</p>
+        <p>If you're looking to rate a recent installation, please use the buttons in the email we sent you.</p>
+        <p><a href="https://impressivebatteries.com.au">impressivebatteries.com.au</a></p>
+    </main>
 </body>
 </html>

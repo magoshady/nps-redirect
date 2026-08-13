@@ -1,11 +1,24 @@
 /**
  * Example: How to send NPS survey emails programmatically
- * 
+ *
  * This is a Node.js example using Nodemailer (popular email library)
  * You can adapt this to any language/platform you use.
- * 
+ *
  * Install dependencies first:
  * npm install nodemailer
+ *
+ * ---------------------------------------------------------------------------
+ * SUPERSEDED — this example builds links in the old, unsafe shape:
+ * script.google.com/...?score=N&customer=...&email=...
+ *
+ * Those links let mail security scanners record votes on the customer's behalf
+ * (always score 0, the first link in the email) and put customer email
+ * addresses in URLs on a domain that doesn't match the sender.
+ *
+ * Production sending happens through n8n — see n8n-code-node-example.js for the
+ * signed-token version, and DEPLOYMENT.md for the full flow. If you revive this
+ * script, port the createInviteToken() function across first.
+ * ---------------------------------------------------------------------------
  */
 
 const nodemailer = require('nodemailer');

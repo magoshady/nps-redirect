@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **Parts of this document describe the superseded flow.** Rating links that
+> point directly at `script.google.com` with the customer's email in the query
+> string are no longer supported — that design let mail security scanners record
+> votes (always `0`) and got the emails flagged as phishing.
+>
+> See [DEPLOYMENT.md](DEPLOYMENT.md) for the current setup.
+
 # ⚡ HubSpot + n8n Quick Start (10 Minutes)
 
 Get your automated NPS system running with HubSpot in 10 minutes.
@@ -297,4 +305,3 @@ Your customers will now automatically receive NPS surveys when deals close in Hu
 - **Backend Script:** `google-apps-script.js`
 
 Happy automating! 🚀✨
-

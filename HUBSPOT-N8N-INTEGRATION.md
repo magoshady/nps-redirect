@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **Parts of this document describe the superseded flow.** Rating links that
+> point directly at `script.google.com` with the customer's email in the query
+> string are no longer supported — that design let mail security scanners record
+> votes (always `0`) and got the emails flagged as phishing.
+>
+> See [DEPLOYMENT.md](DEPLOYMENT.md) for the current setup.
+
 # 🔄 HubSpot + n8n Integration Guide
 
 Automatically send NPS surveys when a deal closes in HubSpot using n8n.
@@ -551,4 +559,3 @@ Your automated NPS system is now connected to HubSpot!
 7. You view results in dashboard → ✅
 
 **Total cost: $0** (compared to HubSpot's $50-100/month NPS add-on!)
-

@@ -1,170 +1,157 @@
 /**
  * n8n Code Node - Prepare NPS Email
- * 
- * This goes in the "Code" node in your n8n workflow
- * Copy and paste this entire code into n8n
+ *
+ * Mode: "Run Once for Each Item"
+ *
+ * Requires the crypto module. In your n8n environment set:
+ *   NODE_FUNCTION_ALLOW_BUILTIN=crypto
+ * (or add crypto to the existing comma-separated list)
+ *
+ * NPS_SECRET must be the SAME value in three places:
+ *   - this workflow            (below, via $env or a credential)
+ *   - Vercel                   (NPS_SECRET environment variable)
+ *   - Apps Script              (Script Property NPS_SECRET)
  */
 
+const crypto = require('crypto');
+
 // ============================================
-// STEP 1: Get customer data from previous node
+// STEP 1: Config
+// ============================================
+
+const CONFIG = {
+  surveyBaseUrl: 'https://nps.impressivebatteries.com.au/r',
+  secret: $env.NPS_SECRET, // never hard-code this
+  from: 'support@impressivebatteries.com.au',
+  fromName: 'Impressive Electrical',
+  subject: 'How was your installation?',
+  businessAddress: '123 Example Street, Sydney NSW 2000', // your registered address
+  unsubscribeBaseUrl: 'https://impressivebatteries.com.au/unsubscribe',
+};
+
+if (!CONFIG.secret) {
+  throw new Error('NPS_SECRET is not set — cannot sign survey links');
+}
+
+// ============================================
+// STEP 2: Customer data from the previous node
 // ============================================
 
 const customerId = $input.item.json.customer_id;
 const customerEmail = $input.item.json.customer_email;
-const customerName = $input.item.json.customer_name || 'there'; // fallback to "there" if no name
-const recordId = $input.item.json.record_id; // HubSpot Record/Deal ID
+const customerName = $input.item.json.customer_name || 'there';
+const recordId = $input.item.json.record_id || '';
+
+if (!customerId || !customerEmail) {
+  throw new Error(`Missing customer_id or customer_email for item: ${JSON.stringify($input.item.json)}`);
+}
 
 // ============================================
-// STEP 2: Your email template HTML
+// STEP 3: Build the signed invite token
 // ============================================
+//
+// The token carries the customer identity instead of putting their email
+// address in the URL, and it is signed so nobody can submit a rating for
+// someone else. It expires after 30 days (enforced server-side).
 
-// OPTION A: Paste the entire email-template.html content here
-// Open email-template.html, copy ALL of it, and paste between the backticks below
+function createInviteToken({ customer, email, record }, secret, now = Date.now()) {
+  const body = Buffer.from(
+    JSON.stringify({ c: String(customer), e: String(email), r: record ? String(record) : '', i: now }),
+  ).toString('base64url');
+
+  const signature = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${signature}`;
+}
+
+const npsToken = createInviteToken(
+  { customer: customerId, email: customerEmail, record: recordId },
+  CONFIG.secret,
+);
+
+const ratingUrl = (score) =>
+  `${CONFIG.surveyBaseUrl}?score=${score}&t=${encodeURIComponent(npsToken)}`;
+
+const unsubscribeUrl = `${CONFIG.unsubscribeBaseUrl}?t=${encodeURIComponent(npsToken)}`;
+
+// ============================================
+// STEP 4: The email template
+// ============================================
+//
+// Paste the full contents of email-template.html between the backticks below.
+// Keep the {{PLACEHOLDER}} tokens intact — they are replaced in step 5.
+
 const emailTemplate = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>How likely are you to recommend us?</title>
-</head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5;">
-    
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
-        <tr>
-            <td style="padding: 40px 20px;">
-                
-                <!-- Main Container -->
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-                    
-                    <!-- Header -->
-                    <tr>
-                        <td style="padding: 40px 40px 30px; text-align: center;">
-                            <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #333333; line-height: 1.4;">
-                                How likely are you to recommend us to a friend or colleague?
-                            </h1>
-                        </td>
-                    </tr>
-                    
-                    <!-- Subtitle -->
-                    <tr>
-                        <td style="padding: 0 40px 30px; text-align: center;">
-                            <p style="margin: 0; font-size: 16px; color: #666666; line-height: 1.5;">
-                                We'd love to hear your feedback about your recent installation experience.
-                            </p>
-                        </td>
-                    </tr>
-                    
-                    <!-- Rating Scale -->
-                    <tr>
-                        <td style="padding: 0 20px 20px;">
-                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 560px; margin: 0 auto;">
-                                <tr>
-                                    <td align="center">
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=0&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">0</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=1&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">1</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=2&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">2</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=3&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">3</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=4&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">4</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=5&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">5</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=6&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">6</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=7&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">7</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=8&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">8</a>
-                                           <a href="https://nps-redirect.vercel.app/api/redirect?score=9&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">9</a>
-                                        <a href="https://nps-redirect.vercel.app/api/redirect?score=10&customer={{CUSTOMER_ID}}&email={{CUSTOMER_EMAIL}}&record={{RECORD_ID}}" style="display: inline-block; width: 38px; height: 38px; margin: 3px; background-color: #e0001a; border-radius: 6px; text-decoration: none; font-size: 16px; font-weight: 600; color: #ffffff; line-height: 38px; text-align: center;">10</a>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- Labels -->
-                    <tr>
-                        <td style="padding: 0 40px 40px;">
-                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                                <tr>
-                                    <td style="text-align: left; font-size: 12px; color: #999999;">
-                                        Not likely at all
-                                    </td>
-                                    <td style="text-align: right; font-size: 12px; color: #999999;">
-                                        Extremely likely
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    
-                    <!-- Footer -->
-                    <tr>
-                        <td style="padding: 30px 40px; background-color: #f9f9f9; border-top: 1px solid #eeeeee; border-radius: 0 0 8px 8px;">
-                            <p style="margin: 0; font-size: 14px; color: #999999; text-align: center; line-height: 1.5;">
-                                This should only take a moment. Thank you for your time!
-                            </p>
-                        </td>
-                    </tr>
-                    
-                </table>
-                
-            </td>
-        </tr>
-    </table>
-    
-</body>
-</html>
+<!-- >>> PASTE THE CONTENTS OF email-template.html HERE <<< -->
 `;
 
 // ============================================
-// STEP 3: Replace placeholders with actual customer data
+// STEP 5: Fill in the placeholders
 // ============================================
 
-let emailHtml = emailTemplate;
+let html = emailTemplate
+  .replace(/\{\{CUSTOMER_NAME\}\}/g, escapeHtml(customerName))
+  .replace(/\{\{NPS_TOKEN\}\}/g, encodeURIComponent(npsToken))
+  .replace(/\{\{BUSINESS_ADDRESS\}\}/g, escapeHtml(CONFIG.businessAddress))
+  .replace(/\{\{UNSUBSCRIBE_URL\}\}/g, unsubscribeUrl);
 
-// Replace {{CUSTOMER_ID}} with actual customer ID (URL encoded)
-emailHtml = emailHtml.replace(/\{\{CUSTOMER_ID\}\}/g, encodeURIComponent(customerId));
+function escapeHtml(value) {
+  return String(value).replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char],
+  );
+}
 
-// Replace {{CUSTOMER_EMAIL}} with actual customer email (URL encoded)
-emailHtml = emailHtml.replace(/\{\{CUSTOMER_EMAIL\}\}/g, encodeURIComponent(customerEmail));
-
-// Replace {{RECORD_ID}} with actual HubSpot record ID (URL encoded)
-emailHtml = emailHtml.replace(/\{\{RECORD_ID\}\}/g, encodeURIComponent(recordId));
-
-// Optional: If you add {{CUSTOMER_NAME}} to your template
-emailHtml = emailHtml.replace(/\{\{CUSTOMER_NAME\}\}/g, customerName);
+// A plaintext alternative is not optional. Sending HTML-only is one of the
+// cheapest ways to look like bulk phishing to a spam filter.
+const text = [
+  `Hi ${customerName},`,
+  '',
+  'Your installation is complete, and we would like to know how it went.',
+  'How likely are you to recommend Impressive Electrical to a friend or colleague?',
+  '',
+  'Rate us from 0 (not likely) to 10 (extremely likely):',
+  '',
+  ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => `  ${String(score).padStart(2)} - ${ratingUrl(score)}`),
+  '',
+  "You'll be asked to confirm your choice, so a mis-tap won't be counted.",
+  '',
+  '--',
+  CONFIG.fromName,
+  CONFIG.businessAddress,
+  'https://impressivebatteries.com.au',
+  '',
+  `Unsubscribe from feedback requests: ${unsubscribeUrl}`,
+].join('\n');
 
 // ============================================
-// STEP 4: Return the prepared email
+// STEP 6: Output
 // ============================================
+//
+// In the Send Email node, map:
+//   To:      {{ $json.to }}
+//   Subject: {{ $json.subject }}
+//   HTML:    {{ $json.html }}
+//   Text:    {{ $json.text }}
+//
+// And add these headers — List-Unsubscribe materially improves inbox
+// placement and is expected by Gmail and Outlook for bulk mail:
+//   List-Unsubscribe:      {{ $json.headers['List-Unsubscribe'] }}
+//   List-Unsubscribe-Post: {{ $json.headers['List-Unsubscribe-Post'] }}
 
 return {
   json: {
     to: customerEmail,
-    from: 'support@impressivebatteries.com.au', // Change this to your email
-    fromName: 'Impressive Electrical', // Change this to your company name
-    subject: 'How was your installation experience?',
-    html: emailHtml,
-    // These fields are for tracking/debugging
-    customerId: customerId,
-    timestamp: new Date().toISOString()
-  }
+    from: CONFIG.from,
+    fromName: CONFIG.fromName,
+    subject: CONFIG.subject,
+    html,
+    text,
+    headers: {
+      'List-Unsubscribe': `<${unsubscribeUrl}>, <mailto:${CONFIG.from}?subject=unsubscribe>`,
+      'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+    },
+    // Useful for debugging / logging, not for sending:
+    customerId,
+    recordId,
+  },
 };
-
-// ============================================
-// NOTES:
-// ============================================
-
-// The output of this node will be:
-// {
-//   "to": "customer@example.com",
-//   "from": "support@yourcompany.com",
-//   "subject": "How was your installation experience?",
-//   "html": "[full HTML with replaced placeholders]",
-//   "customerId": "DEAL-12345",
-//   "timestamp": "2024-11-14T10:30:00.000Z"
-// }
-
-// You can then use these fields in the next node (Send Email node):
-// - To: {{ $json.to }}
-// - From: {{ $json.from }}
-// - Subject: {{ $json.subject }}
-// - Body (HTML): {{ $json.html }}
-
